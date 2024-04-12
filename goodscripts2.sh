@@ -8916,7 +8916,7 @@ menu() {
     echoContent yellow "15.域名黑名单"
     echoContent skyBlue "-------------------------版本管理-----------------------------"
     echoContent yellow "16.core管理"
-    echoContent yellow "17.更新脚本"
+    # echoContent yellow "17.更新脚本"
     echoContent yellow "18.安装BBR、DD脚本"
     echoContent skyBlue "-------------------------脚本管理-----------------------------"
     echoContent yellow "20.卸载脚本"
