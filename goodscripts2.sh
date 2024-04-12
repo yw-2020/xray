@@ -8888,11 +8888,12 @@ singBoxVersionManageMenu() {
 # 主菜单
 menu() {
     cd "$HOME" || exit
-    echoContent red "\n=============================================================="
+    echoContent green "\n=============================================================="
     echoContent green "作者：A Good Man"
 	
     showInstallStatus
     checkWgetShowProgress
+    echoContent green "\n=============================================================="  
 	
     if [[ -n "${coreInstallType}" ]]; then
         echoContent yellow "1.重新安装"
