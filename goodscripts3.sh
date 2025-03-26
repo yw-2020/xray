@@ -9755,12 +9755,12 @@ singBoxVersionManageMenu() {
 # 主菜单
 menu() {
     cd "$HOME" || exit
-    echoContent red "\n=============================================================="
+    echoContent yellow "\n=============================================================="
     echoContent green "作者：A Good Man"
     echoContent green "当前版本：3.0"
     showInstallStatus
     checkWgetShowProgress  
-    echoContent red "\n=============================================================="
+    echoContent yellow "\n=============================================================="
     
     if [[ -n "${coreInstallType}" ]]; then
         echoContent yellow "1.重新安装"
