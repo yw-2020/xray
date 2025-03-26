@@ -6533,7 +6533,7 @@ EOF
 # 脚本快捷方式
 aliasInstall() {
 
-    if [[ -f "$HOME/install.sh" ]] && [[ -d "/etc/v2ray-agent" ]] && grep <"$HOME/install.sh" -q "作者:mack-a"; then
+    if [[ -f "$HOME/install.sh" ]] && [[ -d "/etc/v2ray-agent" ]] && grep <"$HOME/install.sh" -q "作者:A Good Man"; then
         mv "$HOME/install.sh" /etc/v2ray-agent/install.sh
         local vasmaType=
         if [[ -d "/usr/bin/" ]]; then
@@ -9760,6 +9760,8 @@ menu() {
     echoContent green "当前版本：3.0"
     showInstallStatus
     checkWgetShowProgress  
+    echoContent red "\n=============================================================="
+    
     if [[ -n "${coreInstallType}" ]]; then
         echoContent yellow "1.重新安装"
     else
