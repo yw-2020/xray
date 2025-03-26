@@ -9759,9 +9759,7 @@ menu() {
     echoContent green "作者：A Good Man"
     echoContent green "当前版本：3.0"
     showInstallStatus
-    checkWgetShowProgress
-
-  
+    checkWgetShowProgress  
     if [[ -n "${coreInstallType}" ]]; then
         echoContent yellow "1.重新安装"
     else
