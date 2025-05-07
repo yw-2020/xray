@@ -1,6 +1,6 @@
 #!/bin/bash
 # Auto-Setup Warp Split Tunneling with sing-box (by @yw-2020)
-# 支持首次安装和后续追加分流域名
+# 支持首次安装和后续追加分流域名，并在添加后自动显示当前域名
 
 set -e
 
@@ -9,7 +9,7 @@ WGCF_PROFILE="wgcf-profile.conf"
 
 # 检测是否已经安装
 if [ -f "$CONFIG_FILE" ]; then
-  echo "\n检测到 sing-box 已安装\n"
+  echo -e "\n检测到 sing-box 已安装\n"
   read -p "请输入要添加的分流域名（多个用空格分隔）: " -a new_domains
 
   if ! command -v jq &>/dev/null; then
@@ -24,6 +24,10 @@ if [ -f "$CONFIG_FILE" ]; then
 
   echo -e "\n✅ 分流域名已添加，正在重启 sing-box 服务...\n"
   systemctl restart sing-box && echo "✅ 重启成功"
+
+  echo -e "\n🌐 当前所有分流域名："
+  jq -r '.route.rules[] | select(.domain_suffix) | .domain_suffix[]' "$CONFIG_FILE" | sed 's/^/ - /'
+
   exit 0
 fi
 
