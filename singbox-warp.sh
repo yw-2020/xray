@@ -33,7 +33,7 @@ fi
 apt update && apt install -y curl wget sudo gnupg wireguard-tools jq
 
 # Step 2: Install wgcf
-wget -O /usr/local/bin/wgcf https://github.com/V1J3/wgcf/releases/download/v2.2.15/wgcf_2.2.15_linux_amd64
+wget -O /usr/local/bin/wgcf https://github.com/ViRb3/wgcf/releases/download/v2.2.15/wgcf_2.2.15_linux_amd64
 chmod +x /usr/local/bin/wgcf
 
 # Step 3: Register and generate Warp config
