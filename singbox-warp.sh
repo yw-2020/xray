@@ -1,6 +1,6 @@
 #!/bin/bash
 # Auto-Setup Warp Split Tunneling with sing-box (by @yw-2020)
-# 支持首次安装和后续追加分流域名，并在添加前后显示当前域名
+# 支持首次安装、追加与删除分流域名，添加前后显示当前域名
 
 set -e
 
@@ -11,62 +11,80 @@ WGCF_PROFILE="wgcf-profile.conf"
 if [ -f "$CONFIG_FILE" ]; then
   echo -e "\n检测到 sing-box 已安装"
 
-  echo -e "\n🌐 当前已有分流域名："
-  jq -r '.route.rules[] | select(.domain_suffix) | .domain_suffix[]' "$CONFIG_FILE" | sed 's/^/ - /'
-
-  read -p "\n请输入要添加的分流域名（多个用空格分隔）: " -a new_domains
-
   if ! command -v jq &>/dev/null; then
     echo "未找到 jq ，正在安装..."
     apt update && apt install -y jq
   fi
 
-  temp_file=$(mktemp)
-  jq --argjson new "$(printf '%s\n' "${new_domains[@]}" | jq -R . | jq -s .)" '
-    .route.rules |= map(
-      if has("domain_suffix") then
-        .domain_suffix += $new | .domain_suffix |= unique
-      else
-        .
-      end
-    )
-  ' "$CONFIG_FILE" > "$temp_file" && mv "$temp_file" "$CONFIG_FILE"
+  echo -e "\n🌐 当前已有分流域名："
+  jq -r '.route.rules[] | select(.domain_suffix) | .domain_suffix[]' "$CONFIG_FILE" | sed 's/^/ - /'
 
-  echo -e "\n✅ 分流域名已添加，正在重启 sing-box 服务..."
-  systemctl restart sing-box && echo "✅ 重启成功"
+  read -p $'\n请输入要添加的分流域名（多个用空格分隔，输入0跳过）: ' -a new_domains
+
+  # 用户输入 0 跳过添加
+  if [[ "${new_domains[*]}" =~ (^|[[:space:]])0($|[[:space:]]) ]]; then
+    echo -e "\n⚙️ 选择了跳过添加域名。"
+  else
+    temp_file=$(mktemp)
+    jq --argjson new "$(printf '%s\n' "${new_domains[@]}" | jq -R . | jq -s .)" '
+      .route.rules |= map(
+        if has("domain_suffix") then
+          .domain_suffix += $new | .domain_suffix |= unique
+        else . end
+      )
+    ' "$CONFIG_FILE" > "$temp_file" && mv "$temp_file" "$CONFIG_FILE"
+    echo -e "\n✅ 已添加新域名，已重启 sing-box 服务..."
+    systemctl restart sing-box
+  fi
+
+  read -p $'\n是否要删除已有的分流域名？输入 y 继续，其他任意键跳过：' confirm
+  if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
+    current_domains=($(jq -r '.route.rules[] | select(.domain_suffix) | .domain_suffix[]' "$CONFIG_FILE"))
+    echo -e "\n🌐 当前可删除的域名："
+    for i in "${!current_domains[@]}"; do
+      printf " [%d] %s\n" "$i" "${current_domains[$i]}"
+    done
+
+    read -p $'\n请输入要删除的编号（多个用空格分隔）: ' -a del_indexes
+
+    for idx in "${del_indexes[@]}"; do
+      unset 'current_domains[idx]'
+    done
+
+    new_json=$(printf '%s\n' "${current_domains[@]}" | jq -R . | jq -s .)
+    temp_file=$(mktemp)
+    jq --argjson updated "$new_json" '
+      .route.rules |= map(
+        if has("domain_suffix") then .domain_suffix = $updated else . end
+      )
+    ' "$CONFIG_FILE" > "$temp_file" && mv "$temp_file" "$CONFIG_FILE"
+
+    echo -e "\n✅ 已删除选定域名，正在重启 sing-box 服务..."
+    systemctl restart sing-box
+  fi
 
   echo -e "\n🌐 最新所有分流域名："
   jq -r '.route.rules[] | select(.domain_suffix) | .domain_suffix[]' "$CONFIG_FILE" | sed 's/^/ - /'
-
   exit 0
 fi
 
 # 第一次安装
-
-# Step 1: 安装依赖
 apt update && apt install -y curl wget sudo gnupg wireguard-tools jq
 
-# Step 2: 安装 wgcf
 wget -O /usr/local/bin/wgcf https://github.com/ViRb3/wgcf/releases/download/v2.2.26/wgcf_2.2.26_linux_amd64
 chmod +x /usr/local/bin/wgcf
 
-# Step 3: 注册并生成 Warp 配置
 wgcf register --accept-tos
 wgcf generate
 
-# Step 4: 从 wgcf-profile.conf 提取参数
 PRIVATE_KEY=$(grep 'PrivateKey' $WGCF_PROFILE | cut -d ' ' -f3)
 ADDRESS4=$(grep -m1 'Address' $WGCF_PROFILE | cut -d ' ' -f3)
 ADDRESS6=$(grep -m2 'Address' $WGCF_PROFILE | tail -n1 | cut -d ' ' -f3)
 PEER_PUBLIC_KEY=$(grep 'PublicKey' $WGCF_PROFILE | cut -d ' ' -f3)
 
-# Step 5: 用户输入域名
 read -p "请输入要分流的域名（多个用空格分隔）: " -a DOMAIN_LIST
-
-# 转换为 JSON 数组
 json_array=$(printf '%s\n' "${DOMAIN_LIST[@]}" | jq -R . | jq -s .)
 
-# Step 6: 创建 sing-box 配置文件
 mkdir -p /etc/sing-box
 cat > "$CONFIG_FILE" <<EOF
 {
@@ -117,10 +135,8 @@ cat > "$CONFIG_FILE" <<EOF
 }
 EOF
 
-# Step 7: 安装 sing-box
 curl -fsSL https://sing-box.app/deb-install.sh | bash
 
-# Step 8: 创建 systemd 服务文件
 cat > /etc/systemd/system/sing-box.service <<EOF
 [Unit]
 Description=Sing-Box Service
@@ -137,7 +153,6 @@ LimitNOFILE=infinity
 WantedBy=multi-user.target
 EOF
 
-# Step 9: 启用并启动服务
 systemctl daemon-reexec
 systemctl daemon-reload
 systemctl enable sing-box
