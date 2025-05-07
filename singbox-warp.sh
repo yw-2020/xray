@@ -1,34 +1,60 @@
 #!/bin/bash
+# Auto-Setup Warp Split Tunneling with sing-box (by @yw-2020)
+# 支持首次安装和后续追加分流域名
 
 set -e
 
-### Step 1: 用户输入分流域名
-read -p "请输入需要走WARP分流的域名（多个用空格隔开）: " -a DOMAIN_LIST
+CONFIG_FILE="/etc/sing-box/config.json"
+WGCF_PROFILE="wgcf-profile.conf"
 
-### Step 2: 安装依赖
-apt update && apt install -y wireguard wireguard-tools curl sudo
+# 检测是否已经安装
+if [ -f "$CONFIG_FILE" ]; then
+  echo "\n检测到 sing-box 已安装\n"
+  read -p "请输入要添加的分流域名（多个用空格分隔）: " -a new_domains
 
-### Step 3: 安装 wgcf 并注册 WARP 账户
-cd /tmp
-curl -L -o wgcf https://github.com/ViRb3/wgcf/releases/download/v2.2.15/wgcf_2.2.15_linux_amd64
-chmod +x wgcf
-./wgcf register --accept-tos
-./wgcf generate
+  if ! command -v jq &>/dev/null; then
+    echo "未找到 jq ，正在安装..."
+    apt update && apt install -y jq
+  fi
 
+  temp_file=$(mktemp)
+  jq --argjson new "$(printf '%s\n' "${new_domains[@]}" | jq -R . | jq -s .)" \
+     '(.route.rules[] | select(.domain_suffix)) |= . + ($new - (. // [] | unique))' \
+     "$CONFIG_FILE" > "$temp_file" && mv "$temp_file" "$CONFIG_FILE"
+
+  echo -e "\n✅ 分流域名已添加，正在重启 sing-box 服务...\n"
+  systemctl restart sing-box && echo "✅ 重启成功"
+  exit 0
+fi
+
+# 第一次安装
+
+# Step 1: Install dependencies
+apt update && apt install -y curl wget sudo gnupg wireguard-tools jq
+
+# Step 2: Install wgcf
+wget -O /usr/local/bin/wgcf https://github.com/V1J3/wgcf/releases/download/v2.2.15/wgcf_2.2.15_linux_amd64
+chmod +x /usr/local/bin/wgcf
+
+# Step 3: Register and generate Warp config
+wgcf register --accept-tos
+wgcf generate
+
+# Step 4: Extract info from wgcf-profile.conf
+PRIVATE_KEY=$(grep 'PrivateKey' $WGCF_PROFILE | cut -d ' ' -f3)
+ADDRESS4=$(grep -m1 'Address' $WGCF_PROFILE | cut -d ' ' -f3)
+ADDRESS6=$(grep -m2 'Address' $WGCF_PROFILE | tail -n1 | cut -d ' ' -f3)
+PEER_PUBLIC_KEY=$(grep 'PublicKey' $WGCF_PROFILE | cut -d ' ' -f3)
+
+# Step 5: Ask user for domains
+read -p "请输入要分流的域名（多个用空格分隔）: " -a DOMAIN_LIST
+
+# Convert to JSON array
+json_array=$(printf '%s\n' "${DOMAIN_LIST[@]}" | jq -R . | jq -s .)
+
+# Step 6: Create sing-box config
 mkdir -p /etc/sing-box
-cp wgcf-profile.conf /etc/sing-box/
-
-### Step 4: 解析必要参数
-PRIVATE_KEY=$(grep PrivateKey /etc/sing-box/wgcf-profile.conf | awk '{print $3}')
-PEER_PUBLIC_KEY=$(grep PublicKey /etc/sing-box/wgcf-profile.conf | awk '{print $3}')
-ADDR_IPV4=$(grep Address /etc/sing-box/wgcf-profile.conf | grep 172 | awk '{print $3}')
-ADDR_IPV6=$(grep Address /etc/sing-box/wgcf-profile.conf | grep ":" | awk '{print $3}')
-
-### Step 5: 安装 sing-box
-curl -fsSL https://sing-box.app/deb-install.sh | bash
-
-### Step 6: 生成配置文件
-cat > /etc/sing-box/config.json <<EOF
+cat > "$CONFIG_FILE" <<EOF
 {
   "log": {
     "level": "info",
@@ -51,8 +77,8 @@ cat > /etc/sing-box/config.json <<EOF
       "server": "engage.cloudflareclient.com",
       "server_port": 2408,
       "local_address": [
-        "$ADDR_IPV4",
-        "$ADDR_IPV6"
+        "$ADDRESS4",
+        "$ADDRESS6"
       ],
       "private_key": "$PRIVATE_KEY",
       "peer_public_key": "$PEER_PUBLIC_KEY",
@@ -67,9 +93,7 @@ cat > /etc/sing-box/config.json <<EOF
   "route": {
     "rules": [
       {
-        "domain_suffix": [
-$(for domain in "${DOMAIN_LIST[@]}"; do echo "          \"$domain\","; done | sed '$s/,$//')
-        ],
+        "domain_suffix": $json_array,
         "outbound": "warp"
       }
     ],
@@ -79,11 +103,13 @@ $(for domain in "${DOMAIN_LIST[@]}"; do echo "          \"$domain\","; done | se
 }
 EOF
 
-### Step 7: 设置为开机自启服务
+# Step 7: Install sing-box
+curl -fsSL https://sing-box.app/deb-install.sh | bash
+
+# Step 8: Set up systemd service
 cat > /etc/systemd/system/sing-box.service <<EOF
 [Unit]
 Description=Sing-Box Service
-Documentation=https://sing-box.sagernet.org
 After=network.target nss-lookup.target
 
 [Service]
@@ -97,14 +123,12 @@ LimitNOFILE=infinity
 WantedBy=multi-user.target
 EOF
 
+# Step 9: Enable and start service
 systemctl daemon-reexec
 systemctl daemon-reload
 systemctl enable sing-box
 systemctl restart sing-box
 
-clear
-echo -e "\n\e[32m✅ 已成功配置 WARP 分流，当前已生效！\e[0m"
-echo -e "\n以下域名已通过 WARP 分流:"
-for domain in "${DOMAIN_LIST[@]}"; do
-  echo "  - $domain"
-done
+echo -e "\n✅ Sing-box Warp 分流已完成并启动成功！"
+echo -e "\n🌐 当前分流域名："
+printf " - %s\n" "${DOMAIN_LIST[@]}"
