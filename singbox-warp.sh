@@ -1,6 +1,6 @@
 #!/bin/bash
 # Auto-Setup Warp Split Tunneling with sing-box (by @yw-2020)
-# 支持首次安装和后续追加分流域名，并在添加后自动显示当前域名
+# 支持首次安装和后续追加分流域名，并在添加前后显示当前域名
 
 set -e
 
@@ -9,8 +9,12 @@ WGCF_PROFILE="wgcf-profile.conf"
 
 # 检测是否已经安装
 if [ -f "$CONFIG_FILE" ]; then
-  echo -e "\n检测到 sing-box 已安装\n"
-  read -p "请输入要添加的分流域名（多个用空格分隔）: " -a new_domains
+  echo -e "\n检测到 sing-box 已安装"
+
+  echo -e "\n🌐 当前已有分流域名："
+  jq -r '.route.rules[] | select(.domain_suffix) | .domain_suffix[]' "$CONFIG_FILE" | sed 's/^/ - /'
+
+  read -p "\n请输入要添加的分流域名（多个用空格分隔）: " -a new_domains
 
   if ! command -v jq &>/dev/null; then
     echo "未找到 jq ，正在安装..."
@@ -22,10 +26,10 @@ if [ -f "$CONFIG_FILE" ]; then
      '(.route.rules[] | select(.domain_suffix)) |= . + ($new - (. // [] | unique))' \
      "$CONFIG_FILE" > "$temp_file" && mv "$temp_file" "$CONFIG_FILE"
 
-  echo -e "\n✅ 分流域名已添加，正在重启 sing-box 服务...\n"
+  echo -e "\n✅ 分流域名已添加，正在重启 sing-box 服务..."
   systemctl restart sing-box && echo "✅ 重启成功"
 
-  echo -e "\n🌐 当前所有分流域名："
+  echo -e "\n🌐 最新所有分流域名："
   jq -r '.route.rules[] | select(.domain_suffix) | .domain_suffix[]' "$CONFIG_FILE" | sed 's/^/ - /'
 
   exit 0
