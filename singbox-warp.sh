@@ -22,9 +22,15 @@ if [ -f "$CONFIG_FILE" ]; then
   fi
 
   temp_file=$(mktemp)
-  jq --argjson new "$(printf '%s\n' "${new_domains[@]}" | jq -R . | jq -s .)" \
-     '(.route.rules[] | select(.domain_suffix)) |= . + ($new - (. // [] | unique))' \
-     "$CONFIG_FILE" > "$temp_file" && mv "$temp_file" "$CONFIG_FILE"
+  jq --argjson new "$(printf '%s\n' "${new_domains[@]}" | jq -R . | jq -s .)" '
+    .route.rules |= map(
+      if has("domain_suffix") then
+        .domain_suffix += $new | .domain_suffix |= unique
+      else
+        .
+      end
+    )
+  ' "$CONFIG_FILE" > "$temp_file" && mv "$temp_file" "$CONFIG_FILE"
 
   echo -e "\n✅ 分流域名已添加，正在重启 sing-box 服务..."
   systemctl restart sing-box && echo "✅ 重启成功"
@@ -37,30 +43,30 @@ fi
 
 # 第一次安装
 
-# Step 1: Install dependencies
+# Step 1: 安装依赖
 apt update && apt install -y curl wget sudo gnupg wireguard-tools jq
 
-# Step 2: Install wgcf
-wget -O /usr/local/bin/wgcf https://github.com/ViRb3/wgcf/releases/download/v2.2.15/wgcf_2.2.15_linux_amd64
+# Step 2: 安装 wgcf
+wget -O /usr/local/bin/wgcf https://github.com/ViRb3/wgcf/releases/download/v2.2.26/wgcf_2.2.26_linux_amd64
 chmod +x /usr/local/bin/wgcf
 
-# Step 3: Register and generate Warp config
+# Step 3: 注册并生成 Warp 配置
 wgcf register --accept-tos
 wgcf generate
 
-# Step 4: Extract info from wgcf-profile.conf
+# Step 4: 从 wgcf-profile.conf 提取参数
 PRIVATE_KEY=$(grep 'PrivateKey' $WGCF_PROFILE | cut -d ' ' -f3)
 ADDRESS4=$(grep -m1 'Address' $WGCF_PROFILE | cut -d ' ' -f3)
 ADDRESS6=$(grep -m2 'Address' $WGCF_PROFILE | tail -n1 | cut -d ' ' -f3)
 PEER_PUBLIC_KEY=$(grep 'PublicKey' $WGCF_PROFILE | cut -d ' ' -f3)
 
-# Step 5: Ask user for domains
+# Step 5: 用户输入域名
 read -p "请输入要分流的域名（多个用空格分隔）: " -a DOMAIN_LIST
 
-# Convert to JSON array
+# 转换为 JSON 数组
 json_array=$(printf '%s\n' "${DOMAIN_LIST[@]}" | jq -R . | jq -s .)
 
-# Step 6: Create sing-box config
+# Step 6: 创建 sing-box 配置文件
 mkdir -p /etc/sing-box
 cat > "$CONFIG_FILE" <<EOF
 {
@@ -111,10 +117,10 @@ cat > "$CONFIG_FILE" <<EOF
 }
 EOF
 
-# Step 7: Install sing-box
+# Step 7: 安装 sing-box
 curl -fsSL https://sing-box.app/deb-install.sh | bash
 
-# Step 8: Set up systemd service
+# Step 8: 创建 systemd 服务文件
 cat > /etc/systemd/system/sing-box.service <<EOF
 [Unit]
 Description=Sing-Box Service
@@ -131,7 +137,7 @@ LimitNOFILE=infinity
 WantedBy=multi-user.target
 EOF
 
-# Step 9: Enable and start service
+# Step 9: 启用并启动服务
 systemctl daemon-reexec
 systemctl daemon-reload
 systemctl enable sing-box
