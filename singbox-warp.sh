@@ -71,7 +71,7 @@ fi
 # 第一次安装
 apt update && apt install -y curl wget sudo gnupg wireguard-tools jq
 
-wget -O /usr/local/bin/wgcf https://github.com/ViRb3/wgcf/releases/download/v2.2.26/wgcf_2.2.26_linux_amd64
+wget -O /usr/local/bin/wgcf https://github.com/ViRb3/wgcf/releases/download/v2.2.15/wgcf_2.2.15_linux_amd64
 chmod +x /usr/local/bin/wgcf
 
 wgcf register --accept-tos
