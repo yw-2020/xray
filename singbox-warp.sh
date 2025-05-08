@@ -24,7 +24,7 @@ fi
 init_config() {
   temp_file=$(mktemp)
   jq 'if .route == null then .route = {} else . end |
-      if .route.rules == null then .route.rules = [] else . end |
+      if (.route.rules | type) != "array" then .route.rules = [] else . end |
       .route.rules |= map(
         if has("domain_suffix") | not then . + {"domain_suffix": []} else . end
       )' "$CONFIG_FILE" > "$temp_file" && mv "$temp_file" "$CONFIG_FILE"
@@ -97,7 +97,7 @@ while true; do
     temp_file=$(mktemp)
     jq --argjson new "$new_json" '
       .route.rules |= (
-        if length == 0 then
+        if (type != "array") or (length == 0) then
           [{"domain_suffix": $new, "outbound": "warp"}]
         else
           map(
