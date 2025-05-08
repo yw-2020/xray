@@ -36,7 +36,7 @@ while true; do
     echo " - （无）"
   else
     for i in "${!domain_list[@]}"; do
-      echo " [$i] ${domain_list[$i]}"
+      printf " [%d] %s\n" "$i" "${domain_list[$i]}"
     done
   fi
 
@@ -53,7 +53,7 @@ while true; do
   fi
 
   if [[ "$option" == "1" ]]; then
-    read -p $'\n请输入要添加的分流域名（多个用英文逗号 "," 分隔）: ' domain_input
+    read -p $'\n请输入要添加的分流域名（多个用英文逗号","分隔）: ' domain_input
     IFS=',' read -ra new_domains <<< "$domain_input"
     if [ ${#new_domains[@]} -eq 0 ]; then
       echo "未输入任何域名，退出。"
@@ -74,17 +74,39 @@ while true; do
       echo "⚠️ 没有可删除的域名。"
       continue
     fi
-    echo -e "\n请输入要删除的编号（多个用英文逗号 "," 分隔）："
-    read -p "Index: " indexes_input
-    IFS=',' read -ra del_indexes <<< "$indexes_input"
-
-    # 删除对应下标的元素
-    for idx in "${del_indexes[@]}"; do
-      unset 'domain_list[idx]'
+    echo -e "\n当前分流域名："
+    for i in "${!domain_list[@]}"; do
+      printf " [%d] %s\n" "$i" "${domain_list[$i]}"
     done
 
-    # 写入新 domain_suffix 数组
-    new_json=$(printf '%s\n' "${domain_list[@]}" | jq -R . | jq -s .)
+    read -p $'\n请输入要删除的编号（多个用英文逗号","分隔）: ' indexes_input
+    IFS=',' read -ra del_indexes <<< "$indexes_input"
+
+    # 验证 index 合法性
+    valid_indexes=()
+    for idx in "${del_indexes[@]}"; do
+      if [[ "$idx" =~ ^[0-9]+$ ]] && [ "$idx" -ge 0 ] && [ "$idx" -lt ${#domain_list[@]} ]; then
+        valid_indexes+=("$idx")
+      fi
+    done
+
+    # 构造新的 domain_suffix 列表
+    filtered_list=()
+    for i in "${!domain_list[@]}"; do
+      skip=false
+      for j in "${valid_indexes[@]}"; do
+        if [ "$i" == "$j" ]; then
+          skip=true
+          break
+        fi
+      done
+      if [ "$skip" = false ]; then
+        filtered_list+=("${domain_list[$i]}")
+      fi
+    done
+
+    # 写入新 domain_suffix
+    new_json=$(printf '%s\n' "${filtered_list[@]}" | jq -R . | jq -s .)
     temp_file=$(mktemp)
     jq --argjson updated "$new_json" '
       .route.rules |= map(
