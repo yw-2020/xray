@@ -23,22 +23,23 @@ fi
 init_config() {
   temp_file=$(mktemp)
   jq 'if .route == null then .route = {} else . end |
-      if .route.rules == null then .route.rules = [{"domain_suffix": []}] else .route.rules |= map(if .domain_suffix == null then .domain_suffix = [] else . end) end' \
+      if .route.rules == null then .route.rules = [{"domain_suffix": [], "outbound": "warp"}] else .route.rules |= map(if .domain_suffix == null then . + {"domain_suffix": []} else . end) end' \
       "$CONFIG_FILE" > "$temp_file" && mv "$temp_file" "$CONFIG_FILE"
 }
 
 init_config
 
-# 获取当前域名列表
-existing_domains=$(jq -r '.route.rules[] | select(.domain_suffix) | .domain_suffix[]' "$CONFIG_FILE" 2>/dev/null || true)
-echo -e "\n🌐 当前已有分流域名："
-if [[ -z "$existing_domains" ]]; then
-  echo " - （无）"
-else
-  printf " - %s\n" $existing_domains
-fi
-
 while true; do
+  echo -e "\n🌐 当前已有分流域名："
+  domain_list=( $(jq -r '.route.rules[] | select(.domain_suffix) | .domain_suffix[]' "$CONFIG_FILE") )
+  if [ ${#domain_list[@]} -eq 0 ]; then
+    echo " - （无）"
+  else
+    for i in "${!domain_list[@]}"; do
+      echo " [$i] ${domain_list[$i]}"
+    done
+  fi
+
   echo -e "\n请选择操作："
   echo "1）添加域名"
   echo "2）删除域名"
@@ -52,7 +53,8 @@ while true; do
   fi
 
   if [[ "$option" == "1" ]]; then
-    read -p $'\n请输入要添加的分流域名（多个用空格分隔）: ' -a new_domains
+    read -p $'\n请输入要添加的分流域名（多个用英文逗号 "," 分隔）: ' domain_input
+    IFS=',' read -ra new_domains <<< "$domain_input"
     if [ ${#new_domains[@]} -eq 0 ]; then
       echo "未输入任何域名，退出。"
       exit 0
@@ -68,20 +70,29 @@ while true; do
     echo -e "\n✅ 域名已添加"
 
   elif [[ "$option" == "2" ]]; then
-    read -p $'\n请输入要删除的分流域名（多个用空格分隔）: ' -a del_domains
-    if [ ${#del_domains[@]} -eq 0 ]; then
-      echo "未输入任何域名，退出。"
-      exit 0
+    if [ ${#domain_list[@]} -eq 0 ]; then
+      echo "⚠️ 没有可删除的域名。"
+      continue
     fi
+    echo -e "\n请输入要删除的编号（多个用英文逗号 "," 分隔）："
+    read -p "Index: " indexes_input
+    IFS=',' read -ra del_indexes <<< "$indexes_input"
+
+    # 删除对应下标的元素
+    for idx in "${del_indexes[@]}"; do
+      unset 'domain_list[idx]'
+    done
+
+    # 写入新 domain_suffix 数组
+    new_json=$(printf '%s\n' "${domain_list[@]}" | jq -R . | jq -s .)
     temp_file=$(mktemp)
-    jq --argjson del "$(printf '%s\n' "${del_domains[@]}" | jq -R . | jq -s .)" '
+    jq --argjson updated "$new_json" '
       .route.rules |= map(
-        if has("domain_suffix") then
-          .domain_suffix |= map(select(INDEX($del) | not))
-        else . end
+        if has("domain_suffix") then .domain_suffix = $updated else . end
       )
     ' "$CONFIG_FILE" > "$temp_file" && mv "$temp_file" "$CONFIG_FILE"
-    echo -e "\n✅ 域名已删除"
+
+    echo -e "\n✅ 指定域名已删除"
 
   else
     echo "❌ 无效的选项，退出"
@@ -91,11 +102,7 @@ while true; do
   echo -e "\n🔄 正在尝试重启 sing-box..."
   pkill -f "$SINGBOX_BIN run" 2>/dev/null || true
   sleep 1
-  nohup $SINGBOX_BIN run -c "$CONFIG_FILE" &>/dev/null &
+  nohup "$SINGBOX_BIN" run -c "$CONFIG_FILE" &>/dev/null &
   sleep 2
   pgrep -f "$SINGBOX_BIN run" > /dev/null && echo "✅ sing-box 启动成功" || echo "❌ sing-box 启动失败"
-
-  echo -e "\n🌐 最新所有分流域名："
-  jq -r '.route.rules[] | select(.domain_suffix) | .domain_suffix[]' "$CONFIG_FILE" | sed 's/^/ - /'
-
 done
