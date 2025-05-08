@@ -3181,12 +3181,10 @@ downloadSingBoxGeositeDB() {
 # 添加sing-box路由规则
 addSingBoxRouteRule() {
     local outboundTag=$1
-    # 域名列表（逗号分隔）
     local domainList=$2
-    # 路由文件名称
     local routingName=$3
 
-    # 转换成 ["a.com","b.com"] 的 JSON 数组
+    # 转换为 ["example.com", "another.com"] JSON 数组
     local domainSuffix
     domainSuffix=$(echo "${domainList}" | tr ',' '\n' | jq -R . | jq -s .)
 
@@ -3208,6 +3206,7 @@ EOF
 }
 
 
+
 # 移除sing-box route rule
 removeSingBoxRouteRule() {
     local outboundTag=$1
@@ -3222,62 +3221,49 @@ removeSingBoxRouteRule() {
 addSingBoxOutbound() {
     local tag=$1
     local type="ipv4"
-    local detour=$2
 
     if echo "${tag}" | grep -q "IPv6"; then
-        type=ipv6
+        type="ipv6"
     fi
 
-    # 修复：IPv4 不允许带 detour，避免非法配置
-    if [[ -n "${detour}" && "${tag}" != *"IPv4"* ]]; then
+    if echo "${tag}" | grep -q "direct"; then
         cat <<EOF >"${singBoxConfigPath}${tag}.json"
 {
-     "outbounds": [
-        {
-             "type": "direct",
-             "tag": "${tag}",
-             "detour": "${detour}",
-             "domain_strategy": "${type}_only"
-        }
-    ]
-}
-EOF
-    elif echo "${tag}" | grep -q "direct"; then
-        cat <<EOF >"${singBoxConfigPath}${tag}.json"
-{
-     "outbounds": [
-        {
-             "type": "direct",
-             "tag": "${tag}"
-        }
-    ]
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "${tag}"
+    }
+  ]
 }
 EOF
     elif echo "${tag}" | grep -q "block"; then
         cat <<EOF >"${singBoxConfigPath}${tag}.json"
 {
-     "outbounds": [
-        {
-             "type": "block",
-             "tag": "${tag}"
-        }
-    ]
+  "outbounds": [
+    {
+      "type": "block",
+      "tag": "${tag}"
+    }
+  ]
 }
 EOF
     else
+        # 默认 direct 类型（不再加 detour）
         cat <<EOF >"${singBoxConfigPath}${tag}.json"
 {
-     "outbounds": [
-        {
-             "type": "direct",
-             "tag": "${tag}",
-             "domain_strategy": "${type}_only"
-        }
-    ]
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "${tag}",
+      "domain_strategy": "${type}_only"
+    }
+  ]
 }
 EOF
     fi
 }
+
 
 
 # 添加Xray-core 出站
@@ -6365,26 +6351,24 @@ showWireGuardDomain() {
 
 # 添加WireGuard分流
 addWireGuardRoute() {
-    local type=$1
-    local tag=$2
+    local type=$1       # IPv4 或 IPv6
+    local tag=$2        # 不再用于 outbound tag
     local domainList=$3
-    # xray
-    if [[ "${coreInstallType}" == "1" ]]; then
 
-        addInstallRouting "wireguard_out_${type}" "${tag}" "${domainList}"
-        addXrayOutbound "wireguard_out_${type}"
+    # xray（保留原逻辑）
+    if [[ "${coreInstallType}" == "1" ]]; then
+        addInstallRouting "wireguard_out" "${tag}" "${domainList}"
+        addXrayOutbound "wireguard_out"
     fi
+
     # sing-box
     if [[ -n "${singBoxConfigPath}" ]]; then
-
-        # rule
-        addSingBoxRouteRule "wireguard_out_${type}" "${domainList}" "wireguard_out_${type}_route"
-        addSingBoxOutbound "wireguard_out_${type}" "wireguard_out"
+        addSingBoxRouteRule "wireguard_out" "${domainList}" "wireguard_route"
         addSingBoxOutbound "01_direct_outbound"
-        # outbound
         addSingBoxWireGuardOut
     fi
 }
+
 
 # 卸载wireGuard
 unInstallWireGuard() {
