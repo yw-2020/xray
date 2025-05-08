@@ -24,8 +24,10 @@ fi
 init_config() {
   temp_file=$(mktemp)
   jq 'if .route == null then .route = {} else . end |
-      if .route.rules == null then .route.rules = [{"domain_suffix": [], "outbound": "warp"}] else .route.rules |= map(if .domain_suffix == null then . + {"domain_suffix": []} else . end) end' \
-      "$CONFIG_FILE" > "$temp_file" && mv "$temp_file" "$CONFIG_FILE"
+      if .route.rules == null then .route.rules = [] else . end |
+      .route.rules |= map(
+        if has("domain_suffix") | not then . + {"domain_suffix": []} else . end
+      )' "$CONFIG_FILE" > "$temp_file" && mv "$temp_file" "$CONFIG_FILE"
 }
 
 # 配置 systemd 自启动
@@ -94,12 +96,19 @@ while true; do
     joined_list=$(IFS=, ; echo "[${new_domains[*]}]")
     temp_file=$(mktemp)
     jq --argjson new "$joined_list" '
-      .route.rules |= map(
-        if has("domain_suffix") then
-          .domain_suffix += $new | .domain_suffix |= map(select(type == "string")) | unique
-        else . end
-      )
-    ' "$CONFIG_FILE" > "$temp_file" && mv "$temp_file" "$CONFIG_FILE"
+      .route.rules |= (
+        if length == 0 then
+          [{"domain_suffix": $new, "outbound": "warp"}]
+        else
+          map(
+            if has("domain_suffix") then
+              .domain_suffix += $new | .domain_suffix |= map(select(type == "string")) | unique
+            else
+              . + {"domain_suffix": $new}
+            end
+          )
+        end
+      )' "$CONFIG_FILE" > "$temp_file" && mv "$temp_file" "$CONFIG_FILE"
     echo -e "\n✅ 域名已添加"
 
   elif [[ "$option" == "2" ]]; then
@@ -115,7 +124,6 @@ while true; do
     read -p $'\n请输入要删除的编号（多个用英文逗号","分隔）: ' indexes_input
     IFS=',' read -ra del_indexes <<< "$indexes_input"
 
-    # 验证 index 合法性
     valid_indexes=()
     for idx in "${del_indexes[@]}"; do
       idx=$(echo "$idx" | xargs)
@@ -124,7 +132,6 @@ while true; do
       fi
     done
 
-    # 构造新的 domain_suffix 列表
     filtered_list=()
     for i in "${!domain_list[@]}"; do
       skip=false
@@ -139,7 +146,6 @@ while true; do
       fi
     done
 
-    # 写入新 domain_suffix
     new_json=$(printf '%s\n' "${filtered_list[@]}" | jq -R . | jq -s .)
     temp_file=$(mktemp)
     jq --argjson updated "$new_json" '
