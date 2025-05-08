@@ -47,7 +47,7 @@ while true; do
 
     2)
       echo -e "\n📄 当前已分流域名："
-      jq -r 'to_entries | .[] | select(.value.outbound=="wireguard_out") | "[\(.key)]: \(.value.domain_suffix[]?)"' "$CONFIG_FILE"
+      jq -r '.route.rules[]? | select(.outbound=="wireguard_out") | .domain_suffix[]?' "$CONFIG_FILE"
       ;;
 
     3)
