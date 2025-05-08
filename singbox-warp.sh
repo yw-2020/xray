@@ -54,9 +54,16 @@ while true; do
 
   if [[ "$option" == "1" ]]; then
     read -p $'\n请输入要添加的分流域名（多个用英文逗号","分隔）: ' domain_input
-    IFS=',' read -ra new_domains <<< "$domain_input"
+    IFS=',' read -ra raw_domains <<< "$domain_input"
+    new_domains=()
+    for d in "${raw_domains[@]}"; do
+      trimmed=$(echo "$d" | xargs)
+      if [ -n "$trimmed" ]; then
+        new_domains+=("$trimmed")
+      fi
+    done
     if [ ${#new_domains[@]} -eq 0 ]; then
-      echo "未输入任何域名，退出。"
+      echo "未输入任何有效域名，退出。"
       exit 0
     fi
     temp_file=$(mktemp)
@@ -85,6 +92,7 @@ while true; do
     # 验证 index 合法性
     valid_indexes=()
     for idx in "${del_indexes[@]}"; do
+      idx=$(echo "$idx" | xargs)
       if [[ "$idx" =~ ^[0-9]+$ ]] && [ "$idx" -ge 0 ] && [ "$idx" -lt ${#domain_list[@]} ]; then
         valid_indexes+=("$idx")
       fi
@@ -126,5 +134,8 @@ while true; do
   sleep 1
   nohup "$SINGBOX_BIN" run -c "$CONFIG_FILE" &>/dev/null &
   sleep 2
-  pgrep -f "$SINGBOX_BIN run" > /dev/null && echo "✅ sing-box 启动成功" || echo "❌ sing-box 启动失败"
+  pgrep -f "$SINGBOX_BIN run" > /dev/null && echo "✅ sing-box 启动成功" || {
+    echo "❌ sing-box 启动失败"
+    echo -e "\n🧨 请执行 journalctl -eu sing-box.service 查看具体报错日志"
+  }
 done
