@@ -8,6 +8,12 @@ if ! command -v wg &> /dev/null; then
   apt update && apt install -y wireguard-tools
 fi
 
+# ✅ 检查是否已安装 wireguard
+if ! command -v wg-quick &> /dev/null; then
+  echo "📦 正在安装 wireguard 主程序..."
+  apt update && apt install -y wireguard
+fi
+
 # 📂 1. 初始化
 CONFIG_DIR="/etc/v2ray-agent/sing-box/conf"
 CONFIG_FILE="$CONFIG_DIR/config.json"
@@ -19,6 +25,28 @@ WARP_PUB_KEY="gX4f9EXUqb/YU8hGzV0Qp1KeMXtuW2kZv2fStiBdEHo="
 WARP_ENDPOINT="162.159.192.1"
 WARP_PORT=2408
 LOCAL_IPV4="172.16.0.2/32"
+
+# ✨ 创建 wgcf 接口配置
+WGCF_CONF="/etc/wireguard/wgcf.conf"
+mkdir -p /etc/wireguard
+cat > "$WGCF_CONF" <<EOF
+[Interface]
+PrivateKey = $WG_PRIV_KEY
+Address = $LOCAL_IPV4
+DNS = 1.1.1.1
+
+[Peer]
+PublicKey = $WARP_PUB_KEY
+Endpoint = $WARP_ENDPOINT:$WARP_PORT
+AllowedIPs = 0.0.0.0/0
+PersistentKeepalive = 25
+EOF
+
+# 🔄 启动 WireGuard 接口
+if ip link show wgcf &> /dev/null; then
+  wg-quick down wgcf
+fi
+wg-quick up wgcf
 
 # 🧠 检查主 config.json 是否存在
 if [[ ! -f "$CONFIG_FILE" ]]; then
