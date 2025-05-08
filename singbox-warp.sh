@@ -1,11 +1,12 @@
 #!/bin/bash
 # Auto-Setup Warp Split Tunneling with sing-box (v2ray-agent edition)
-# 支持首次安装、后续追加、删除分流域名，完全兼容 v2ray-agent 自带 sing-box 路径
+# 支持首次安装、后续追加、删除分流域名，完全兼容 v2ray-agent 自带 sing-box 路径，并配置 systemd 自启动
 
 set -e
 
 CONFIG_FILE="/etc/v2ray-agent/sing-box/conf/config.json"
 SINGBOX_BIN="/etc/v2ray-agent/sing-box/sing-box"
+SERVICE_FILE="/etc/systemd/system/sing-box.service"
 
 # 检查是否存在配置文件
 if [ ! -f "$CONFIG_FILE" ]; then
@@ -19,7 +20,7 @@ if ! command -v jq &>/dev/null; then
   apt update && apt install -y jq
 fi
 
-# 自动初始化 domain_suffix 结构
+# 初始化配置结构
 init_config() {
   temp_file=$(mktemp)
   jq 'if .route == null then .route = {} else . end |
@@ -27,7 +28,31 @@ init_config() {
       "$CONFIG_FILE" > "$temp_file" && mv "$temp_file" "$CONFIG_FILE"
 }
 
+# 配置 systemd 自启动
+init_systemd() {
+  if [ ! -f "$SERVICE_FILE" ]; then
+    echo "🔧 正在写入 systemd 服务配置..."
+    cat > "$SERVICE_FILE" <<EOF
+[Unit]
+Description=Sing-Box
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=$SINGBOX_BIN run -c $CONFIG_FILE
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+    systemctl enable sing-box
+    echo "✅ 已配置 sing-box 自启动服务"
+  fi
+}
+
 init_config
+init_systemd
 
 while true; do
   echo -e "\n🌐 当前已有分流域名："
@@ -130,13 +155,9 @@ while true; do
     exit 1
   fi
 
-  echo -e "\n🔄 正在尝试重启 sing-box..."
-  pkill -f "$SINGBOX_BIN run" 2>/dev/null || true
-  sleep 1
-  nohup "$SINGBOX_BIN" run -c "$CONFIG_FILE" &>/dev/null &
-  sleep 2
-  pgrep -f "$SINGBOX_BIN run" > /dev/null && echo "✅ sing-box 启动成功" || {
+  echo -e "\n🔄 正在通过 systemd 重启 sing-box..."
+  systemctl restart sing-box && echo "✅ sing-box 启动成功" || {
     echo "❌ sing-box 启动失败"
-    echo -e "\n🧨 请执行 journalctl -eu sing-box.service 查看具体报错日志"
+    echo -e "\n🧨 请执行 journalctl -eu sing-box 查看具体报错日志"
   }
 done
