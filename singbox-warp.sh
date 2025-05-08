@@ -86,16 +86,16 @@ while true; do
     for d in "${raw_domains[@]}"; do
       trimmed=$(echo "$d" | xargs)
       if [ -n "$trimmed" ]; then
-        new_domains+=("\"$trimmed\"")
+        new_domains+=("$trimmed")
       fi
     done
     if [ ${#new_domains[@]} -eq 0 ]; then
       echo "未输入任何有效域名，退出。"
       exit 0
     fi
-    joined_list=$(IFS=, ; echo "[${new_domains[*]}]")
+    new_json=$(printf '%s\n' "${new_domains[@]}" | jq -R . | jq -s .)
     temp_file=$(mktemp)
-    jq --argjson new "$joined_list" '
+    jq --argjson new "$new_json" '
       .route.rules |= (
         if length == 0 then
           [{"domain_suffix": $new, "outbound": "warp"}]
