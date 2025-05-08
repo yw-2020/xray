@@ -3178,7 +3178,7 @@ downloadSingBoxGeositeDB() {
     fi
 }
 
-# 添加sing-box路由规则
+# 添加 sing-box 路由规则
 addSingBoxRouteRule() {
     local outboundTag=$1
     # 域名列表
@@ -3188,21 +3188,26 @@ addSingBoxRouteRule() {
 
     local rules=
     rules=$(initSingBoxRules "${domainList}" "${routingName}")
-    # domain精确匹配规则
+    # domain 精确匹配规则
     local domainRules=
     domainRules=$(echo "${rules}" | jq .domainRules)
 
-    # ruleSet规则集
+    # ruleSet 规则集
     local ruleSet=
     ruleSet=$(echo "${rules}" | jq .ruleSet)
 
-    # ruleSet规则tag
+    # ruleSet tag
     local ruleSetTag=[]
     if [[ "$(echo "${ruleSet}" | jq '.|length')" != "0" ]]; then
         ruleSetTag=$(echo "${ruleSet}" | jq '.|map(.tag)')
     fi
-    if [[ -n "${singBoxConfigPath}" ]]; then
 
+    # ✅ 修正 outboundTag：兼容旧版 sing-box，自动替换无效 tag
+    if [[ "${outboundTag}" == "wireguard_out_IPv4" ]]; then
+        outboundTag="wireguard_out"
+    fi
+
+    if [[ -n "${singBoxConfigPath}" ]]; then
         cat <<EOF >"${singBoxConfigPath}${routingName}.json"
 {
   "route": {
@@ -3217,10 +3222,12 @@ addSingBoxRouteRule() {
   }
 }
 EOF
+
+        # 如果规则集为空，删除该字段（清爽处理）
         jq 'if .route.rule_set == [] then del(.route.rule_set) else . end' "${singBoxConfigPath}${routingName}.json" >"${singBoxConfigPath}${routingName}_tmp.json" && mv "${singBoxConfigPath}${routingName}_tmp.json" "${singBoxConfigPath}${routingName}.json"
     fi
-
 }
+
 
 # 移除sing-box route rule
 removeSingBoxRouteRule() {
