@@ -8,16 +8,33 @@ CONFIG_FILE="/etc/v2ray-agent/sing-box/conf/config.json"
 SINGBOX_BIN="/etc/v2ray-agent/sing-box/sing-box"
 SERVICE_FILE="/etc/systemd/system/sing-box.service"
 
-# 检查是否存在配置文件
-if [ ! -f "$CONFIG_FILE" ]; then
-  echo "❌ 配置文件不存在：$CONFIG_FILE"
-  exit 1
-fi
-
 # 检查 jq 工具
 if ! command -v jq &>/dev/null; then
   echo "未找到 jq ，正在安装..."
   apt update && apt install -y jq
+fi
+
+# 若配置文件不存在，则创建空模板
+if [ ! -f "$CONFIG_FILE" ]; then
+  echo "⚠️ 未检测到 config.json，已为你创建空配置..."
+  mkdir -p "$(dirname "$CONFIG_FILE")"
+  cat > "$CONFIG_FILE" <<EOF
+{
+  "log": {
+    "disabled": false,
+    "level": "info",
+    "output": "console"
+  },
+  "route": {
+    "rules": [
+      {
+        "domain_suffix": [],
+        "outbound": "warp"
+      }
+    ]
+  }
+}
+EOF
 fi
 
 # 初始化配置结构
