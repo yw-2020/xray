@@ -3178,7 +3178,7 @@ downloadSingBoxGeositeDB() {
     fi
 }
 
-# 添加 sing-box 路由规则
+# 添加sing-box路由规则
 addSingBoxRouteRule() {
     local outboundTag=$1
     # 域名列表
@@ -3188,26 +3188,21 @@ addSingBoxRouteRule() {
 
     local rules=
     rules=$(initSingBoxRules "${domainList}" "${routingName}")
-    # domain 精确匹配规则
+    # domain精确匹配规则
     local domainRules=
     domainRules=$(echo "${rules}" | jq .domainRules)
 
-    # ruleSet 规则集
+    # ruleSet规则集
     local ruleSet=
     ruleSet=$(echo "${rules}" | jq .ruleSet)
 
-    # ruleSet tag
+    # ruleSet规则tag
     local ruleSetTag=[]
     if [[ "$(echo "${ruleSet}" | jq '.|length')" != "0" ]]; then
         ruleSetTag=$(echo "${ruleSet}" | jq '.|map(.tag)')
     fi
-
-    # ✅ 修正 outboundTag：兼容旧版 sing-box，自动替换无效 tag
-    if [[ "${outboundTag}" == "wireguard_out_IPv4" ]]; then
-        outboundTag="wireguard_out"
-    fi
-
     if [[ -n "${singBoxConfigPath}" ]]; then
+
         cat <<EOF >"${singBoxConfigPath}${routingName}.json"
 {
   "route": {
@@ -3222,12 +3217,10 @@ addSingBoxRouteRule() {
   }
 }
 EOF
-
-        # 如果规则集为空，删除该字段（清爽处理）
         jq 'if .route.rule_set == [] then del(.route.rule_set) else . end' "${singBoxConfigPath}${routingName}.json" >"${singBoxConfigPath}${routingName}_tmp.json" && mv "${singBoxConfigPath}${routingName}_tmp.json" "${singBoxConfigPath}${routingName}.json"
     fi
-}
 
+}
 
 # 移除sing-box route rule
 removeSingBoxRouteRule() {
@@ -3244,68 +3237,60 @@ addSingBoxOutbound() {
     local tag=$1
     local type="ipv4"
     local detour=$2
-
     if echo "${tag}" | grep -q "IPv6"; then
         type=ipv6
     fi
-
-    # 旧版 sing-box 不支持 detour，直接跳过该段逻辑
     if [[ -n "${detour}" ]]; then
-        echo "⚠️ 当前 sing-box 不支持 detour，跳过写入 detour 字段。使用 fallback direct 出站。"
         cat <<EOF >"${singBoxConfigPath}${tag}.json"
 {
-    "outbounds": [
+     "outbounds": [
         {
-            "type": "direct",
-            "tag": "${tag}",
-            "domain_strategy": "${type}_only"
+             "type": "direct",
+             "tag": "${tag}",
+             "detour": "${detour}",
+             "domain_strategy": "${type}_only"
         }
     ]
 }
 EOF
-        return 0
-    fi
+    elif echo "${tag}" | grep -q "direct"; then
 
-    if echo "${tag}" | grep -q "direct"; then
         cat <<EOF >"${singBoxConfigPath}${tag}.json"
 {
-    "outbounds": [
+     "outbounds": [
         {
-            "type": "direct",
-            "tag": "${tag}"
+             "type": "direct",
+             "tag": "${tag}"
         }
     ]
 }
 EOF
-
     elif echo "${tag}" | grep -q "block"; then
+
         cat <<EOF >"${singBoxConfigPath}${tag}.json"
 {
-    "outbounds": [
+     "outbounds": [
         {
-            "type": "block",
-            "tag": "${tag}"
+             "type": "block",
+             "tag": "${tag}"
         }
     ]
 }
 EOF
-
     else
         cat <<EOF >"${singBoxConfigPath}${tag}.json"
 {
-    "outbounds": [
+     "outbounds": [
         {
-            "type": "direct",
-            "tag": "${tag}",
-            "domain_strategy": "${type}_only"
+             "type": "direct",
+             "tag": "${tag}",
+             "domain_strategy": "${type}_only"
         }
     ]
 }
 EOF
     fi
 }
-
-
 
 # 添加Xray-core 出站
 addXrayOutbound() {
