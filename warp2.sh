@@ -11,14 +11,22 @@ fi
 # 📂 初始化变量
 CONFIG_DIR="/etc/v2ray-agent/sing-box/conf"
 CONFIG_FILE="$CONFIG_DIR/config.json"
-WG_PRIV_KEY="$(wg genkey)"
-WG_PUB_KEY="$(echo "$WG_PRIV_KEY" | wg pubkey)"
+WGCF_CONF="/etc/wireguard/wgcf-profile.conf"
 
-# 🔑 WARP Peer (Cloudflare official)
-WARP_PUB_KEY="gX4f9EXUqb/YU8hGzV0Qp1KeMXtuW2kZv2fStiBdEHo="
-WARP_ENDPOINT="162.159.192.1"
-WARP_PORT=2408
-LOCAL_IPV4="172.16.0.2/32"
+# 🔑 提取 wgcf 配置（已注册的有效配置）
+if [[ ! -f "$WGCF_CONF" ]]; then
+  echo "❌ 未找到 $WGCF_CONF，请先通过 wgcf 注册 Warp 帐号。"
+  echo "👉 使用：bash <(curl -Ls https://raw.githubusercontent.com/fscarmen/warp/main/menu.sh)"
+  exit 1
+fi
+
+WG_PRIV_KEY=$(grep PrivateKey "$WGCF_CONF" | awk '{print $3}')
+WG_PUB_KEY=$(echo "$WG_PRIV_KEY" | wg pubkey)
+WARP_PUB_KEY=$(grep PublicKey "$WGCF_CONF" | awk '{print $3}')
+WARP_ENDPOINT=$(grep Endpoint "$WGCF_CONF" | awk '{print $3}' | cut -d: -f1)
+WARP_PORT=$(grep Endpoint "$WGCF_CONF" | awk '{print $3}' | cut -d: -f2)
+LOCAL_IPV4=$(grep Address "$WGCF_CONF" | head -n1 | awk '{print $3}')
+RESERVED=$(grep Reserved "$WGCF_CONF" | awk '{print $3}')
 
 # 🧠 检查主 config.json 是否存在
 if [[ ! -f "$CONFIG_FILE" ]]; then
@@ -30,29 +38,30 @@ fi
 if ! jq -e '.outbounds[]? | select(.tag=="wireguard_out")' "$CONFIG_FILE" >/dev/null; then
   jq \
     --arg endpoint "$WARP_ENDPOINT" \
-    --arg port "$WARP_PORT" \
+    --argjson port "$WARP_PORT" \
     --arg priv "$WG_PRIV_KEY" \
     --arg pub "$WARP_PUB_KEY" \
     --arg local "$LOCAL_IPV4" \
+    --arg reserved "$RESERVED" \
     'if .outbounds then .outbounds += [{
       "type": "wireguard",
       "tag": "wireguard_out",
       "server": $endpoint,
-      "server_port": ($port|tonumber),
+      "server_port": $port,
       "local_address": [$local],
       "private_key": $priv,
       "peer_public_key": $pub,
-      "reserved": "",
+      "reserved": $reserved,
       "mtu": 1280
     }] else . + {"outbounds": [{
       "type": "wireguard",
       "tag": "wireguard_out",
       "server": $endpoint,
-      "server_port": ($port|tonumber),
+      "server_port": $port,
       "local_address": [$local],
       "private_key": $priv,
       "peer_public_key": $pub,
-      "reserved": "",
+      "reserved": $reserved,
       "mtu": 1280
     }]} end' "$CONFIG_FILE" > "$CONFIG_FILE.tmp" && mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
 
@@ -78,8 +87,9 @@ while true; do
   echo "2. 查看当前已分流域名"
   echo "3. 删除指定域名"
   echo "4. 清空所有分流规则"
-  echo "5. 退出"
-  read -rp $'请选择操作 [1-5]: ' choice
+  echo "5. 重启 sing-box 服务"
+  echo "6. 退出"
+  read -rp $'请选择操作 [1-6]: ' choice
 
   case $choice in
     1)
@@ -117,11 +127,16 @@ while true; do
       ;;
 
     5)
+      systemctl restart sing-box && echo "🔄 sing-box 服务已重启"
+      ;;
+
+    6)
       echo "👋 已退出。"
       break
       ;;
+
     *)
-      echo "❗ 请输入 1-5 之间的数字"
+      echo "❗ 请输入 1-6 之间的数字"
       ;;
   esac
 done
