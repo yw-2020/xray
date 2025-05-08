@@ -9,7 +9,7 @@ if ! command -v wg &> /dev/null; then
 fi
 
 # 📂 1. 初始化
-CONFIG_DIR="/etc/sing-box"
+CONFIG_DIR="/etc/v2ray-agent/sing-box/conf"
 CONFIG_FILE="$CONFIG_DIR/config.json"
 WG_PRIV_KEY="$(wg genkey)"
 WG_PUB_KEY="$(echo "$WG_PRIV_KEY" | wg pubkey)"
