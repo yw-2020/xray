@@ -3181,46 +3181,32 @@ downloadSingBoxGeositeDB() {
 # 添加sing-box路由规则
 addSingBoxRouteRule() {
     local outboundTag=$1
-    # 域名列表
+    # 域名列表（逗号分隔）
     local domainList=$2
     # 路由文件名称
     local routingName=$3
 
-    local rules=
-    rules=$(initSingBoxRules "${domainList}" "${routingName}")
-    # domain精确匹配规则
-    local domainRules=
-    domainRules=$(echo "${rules}" | jq .domainRules)
+    # 转换成 ["a.com","b.com"] 的 JSON 数组
+    local domainSuffix
+    domainSuffix=$(echo "${domainList}" | tr ',' '\n' | jq -R . | jq -s .)
 
-    # ruleSet规则集
-    local ruleSet=
-    ruleSet=$(echo "${rules}" | jq .ruleSet)
-
-    # ruleSet规则tag
-    local ruleSetTag=[]
-    if [[ "$(echo "${ruleSet}" | jq '.|length')" != "0" ]]; then
-        ruleSetTag=$(echo "${ruleSet}" | jq '.|map(.tag)')
-    fi
     if [[ -n "${singBoxConfigPath}" ]]; then
-
         cat <<EOF >"${singBoxConfigPath}${routingName}.json"
 {
   "route": {
     "rules": [
       {
-        "rule_set":${ruleSetTag},
-        "domain_regex":${domainRules},
+        "domain_suffix": ${domainSuffix},
         "outbound": "${outboundTag}"
       }
     ],
-    "rule_set":${ruleSet}
+    "final": "01_direct_outbound"
   }
 }
 EOF
-        jq 'if .route.rule_set == [] then del(.route.rule_set) else . end' "${singBoxConfigPath}${routingName}.json" >"${singBoxConfigPath}${routingName}_tmp.json" && mv "${singBoxConfigPath}${routingName}_tmp.json" "${singBoxConfigPath}${routingName}.json"
     fi
-
 }
+
 
 # 移除sing-box route rule
 removeSingBoxRouteRule() {
@@ -3237,10 +3223,13 @@ addSingBoxOutbound() {
     local tag=$1
     local type="ipv4"
     local detour=$2
+
     if echo "${tag}" | grep -q "IPv6"; then
         type=ipv6
     fi
-    if [[ -n "${detour}" ]]; then
+
+    # 修复：IPv4 不允许带 detour，避免非法配置
+    if [[ -n "${detour}" && "${tag}" != *"IPv4"* ]]; then
         cat <<EOF >"${singBoxConfigPath}${tag}.json"
 {
      "outbounds": [
@@ -3254,7 +3243,6 @@ addSingBoxOutbound() {
 }
 EOF
     elif echo "${tag}" | grep -q "direct"; then
-
         cat <<EOF >"${singBoxConfigPath}${tag}.json"
 {
      "outbounds": [
@@ -3266,7 +3254,6 @@ EOF
 }
 EOF
     elif echo "${tag}" | grep -q "block"; then
-
         cat <<EOF >"${singBoxConfigPath}${tag}.json"
 {
      "outbounds": [
@@ -3291,6 +3278,7 @@ EOF
 EOF
     fi
 }
+
 
 # 添加Xray-core 出站
 addXrayOutbound() {
