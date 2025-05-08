@@ -41,7 +41,13 @@ while true; do
       read -rp $'\n🔎 请输入需要分流的域名（多个用逗号分隔）:\n> ' domain_input
       IFS=',' read -ra DOMAIN_ARRAY <<< "$domain_input"
       DOMAIN_JSON=$(printf '%s\n' "${DOMAIN_ARRAY[@]}" | jq -R . | jq -cs .)
-      jq --argjson domains "$DOMAIN_JSON" '(.route.rules //= []) += [{"domain_suffix": $domains, "outbound": "wireguard_out"}]' "$CONFIG_FILE" > "$CONFIG_FILE.tmp" && mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
+      jq --argjson domains "$DOMAIN_JSON" '
+        if .route then
+          .route.rules += [{"domain_suffix": $domains, "outbound": "wireguard_out"}]
+        else
+          . + {"route": {"rules": [{"domain_suffix": $domains, "outbound": "wireguard_out"}]}}
+        end
+      ' "$CONFIG_FILE" > "$CONFIG_FILE.tmp" && mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
       echo "✅ 已添加分流规则。"
       ;;
 
