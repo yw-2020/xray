@@ -75,7 +75,7 @@ init_systemd
 
 while true; do
   echo -e "\n🌐 当前已有分流域名："
-  domain_list=( $(jq -r '.route.rules[] | select(.domain_suffix) | .domain_suffix[]' "$CONFIG_FILE") )
+  domain_list=( $(jq -r '.route.rules[]? | select(.domain_suffix) | .domain_suffix[]?' "$CONFIG_FILE" 2>/dev/null) )
   if [ ${#domain_list[@]} -eq 0 ]; then
     echo " - （无）"
   else
@@ -110,24 +110,19 @@ while true; do
       echo "未输入任何有效域名，退出。"
       exit 0
     fi
-    new_json=$(printf '%s\n' "${new_domains[@]}" | jq -R . | jq -s .)
+    existing_domains=($(jq -r '.route.rules[]? | select(.domain_suffix) | .domain_suffix[]?' "$CONFIG_FILE" 2>/dev/null))
+    merged_domains=("${existing_domains[@]}" "${new_domains[@]}")
+    unique_domains=($(printf "%s\n" "${merged_domains[@]}" | sort -u))
+    new_json=$(printf '%s\n' "${unique_domains[@]}" | jq -R . | jq -s .)
     temp_file=$(mktemp)
-    jq --argjson new "$new_json" '
-      .route.rules |= (
-        if (type != "array") or (length == 0) then
-          [{"domain_suffix": $new, "outbound": "warp"}]
-        else
-          map(
-            if has("domain_suffix") and (.domain_suffix | type == "array") then
-              .domain_suffix += $new | .domain_suffix |= map(select(type == "string")) | unique
-            elif has("domain_suffix") then
-              .domain_suffix = $new
-            else
-              . + {"domain_suffix": $new}
-            end
-          )
-        end
-      )' "$CONFIG_FILE" > "$temp_file" && mv "$temp_file" "$CONFIG_FILE"
+    jq --argjson updated "$new_json" '
+      .route.rules = [
+        {
+          "domain_suffix": $updated,
+          "outbound": "warp"
+        }
+      ]' "$CONFIG_FILE" > "$temp_file" && mv "$temp_file" "$CONFIG_FILE"
+
     echo -e "\n✅ 域名已添加"
 
   elif [[ "$option" == "2" ]]; then
@@ -168,10 +163,12 @@ while true; do
     new_json=$(printf '%s\n' "${filtered_list[@]}" | jq -R . | jq -s .)
     temp_file=$(mktemp)
     jq --argjson updated "$new_json" '
-      .route.rules |= map(
-        if has("domain_suffix") then .domain_suffix = $updated else . end
-      )
-    ' "$CONFIG_FILE" > "$temp_file" && mv "$temp_file" "$CONFIG_FILE"
+      .route.rules = [
+        {
+          "domain_suffix": $updated,
+          "outbound": "warp"
+        }
+      ]' "$CONFIG_FILE" > "$temp_file" && mv "$temp_file" "$CONFIG_FILE"
 
     echo -e "\n✅ 指定域名已删除"
 
