@@ -3237,60 +3237,68 @@ addSingBoxOutbound() {
     local tag=$1
     local type="ipv4"
     local detour=$2
+
     if echo "${tag}" | grep -q "IPv6"; then
         type=ipv6
     fi
+
+    # 旧版 sing-box 不支持 detour，直接跳过该段逻辑
     if [[ -n "${detour}" ]]; then
+        echo "⚠️ 当前 sing-box 不支持 detour，跳过写入 detour 字段。使用 fallback direct 出站。"
         cat <<EOF >"${singBoxConfigPath}${tag}.json"
 {
-     "outbounds": [
+    "outbounds": [
         {
-             "type": "direct",
-             "tag": "${tag}",
-             "detour": "${detour}",
-             "domain_strategy": "${type}_only"
+            "type": "direct",
+            "tag": "${tag}",
+            "domain_strategy": "${type}_only"
         }
     ]
 }
 EOF
-    elif echo "${tag}" | grep -q "direct"; then
+        return 0
+    fi
 
+    if echo "${tag}" | grep -q "direct"; then
         cat <<EOF >"${singBoxConfigPath}${tag}.json"
 {
-     "outbounds": [
+    "outbounds": [
         {
-             "type": "direct",
-             "tag": "${tag}"
+            "type": "direct",
+            "tag": "${tag}"
         }
     ]
 }
 EOF
+
     elif echo "${tag}" | grep -q "block"; then
-
         cat <<EOF >"${singBoxConfigPath}${tag}.json"
 {
-     "outbounds": [
+    "outbounds": [
         {
-             "type": "block",
-             "tag": "${tag}"
+            "type": "block",
+            "tag": "${tag}"
         }
     ]
 }
 EOF
+
     else
         cat <<EOF >"${singBoxConfigPath}${tag}.json"
 {
-     "outbounds": [
+    "outbounds": [
         {
-             "type": "direct",
-             "tag": "${tag}",
-             "domain_strategy": "${type}_only"
+            "type": "direct",
+            "tag": "${tag}",
+            "domain_strategy": "${type}_only"
         }
     ]
 }
 EOF
     fi
 }
+
+
 
 # 添加Xray-core 出站
 addXrayOutbound() {
