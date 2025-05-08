@@ -19,80 +19,83 @@ if ! command -v jq &>/dev/null; then
   apt update && apt install -y jq
 fi
 
-# 自动补全 domain_suffix 配置
-rules_count=$(jq '(.route.rules // []) | length' "$CONFIG_FILE")
-if [ "$rules_count" -eq 0 ] || ! jq -e '.route.rules[] | select(.domain_suffix)' "$CONFIG_FILE" >/dev/null 2>&1; then
-  echo "🔧 初始化 domain_suffix 分流规则..."
+# 自动初始化 domain_suffix 结构
+init_config() {
   temp_file=$(mktemp)
-  jq 'if .route.rules then .route.rules += [{"domain_suffix": []}] else .route.rules = [{"domain_suffix": []}] end' "$CONFIG_FILE" > "$temp_file" && mv "$temp_file" "$CONFIG_FILE"
-fi
+  jq 'if .route == null then .route = {} else . end |
+      if .route.rules == null then .route.rules = [{"domain_suffix": []}] else .route.rules |= map(if .domain_suffix == null then .domain_suffix = [] else . end) end' \
+      "$CONFIG_FILE" > "$temp_file" && mv "$temp_file" "$CONFIG_FILE"
+}
+
+init_config
 
 # 获取当前域名列表
 existing_domains=$(jq -r '.route.rules[] | select(.domain_suffix) | .domain_suffix[]' "$CONFIG_FILE" 2>/dev/null || true)
 echo -e "\n🌐 当前已有分流域名："
-printf " - %s\n" $existing_domains
-
-# 操作菜单
-echo -e "\n请选择操作："
-echo "1）添加域名"
-echo "2）删除域名"
-echo "0）退出"
-read -p $'\n请输入选项（默认 0）: ' option
-option=${option:-0}
-
-if [[ "$option" == "0" ]]; then
-  echo "👋 已退出脚本"
-  exit 0
-fi
-
-if [[ "$option" == "1" ]]; then
-  read -p $'\n请输入要添加的分流域名（多个用空格分隔）: ' -a new_domains
-  if [ ${#new_domains[@]} -eq 0 ]; then
-    echo "未输入任何域名，退出。"
-    exit 0
-  fi
-  temp_file=$(mktemp)
-  jq --argjson new "$(printf '%s\n' "${new_domains[@]}" | jq -R . | jq -s .)" '
-    .route.rules |= map(
-      if has("domain_suffix") then
-        .domain_suffix += $new | .domain_suffix |= unique
-      else
-        .
-      end
-    )
-  ' "$CONFIG_FILE" > "$temp_file" && mv "$temp_file" "$CONFIG_FILE"
-  echo -e "\n✅ 域名已添加"
-
-elif [[ "$option" == "2" ]]; then
-  read -p $'\n请输入要删除的分流域名（多个用空格分隔）: ' -a del_domains
-  if [ ${#del_domains[@]} -eq 0 ]; then
-    echo "未输入任何域名，退出。"
-    exit 0
-  fi
-  temp_file=$(mktemp)
-  jq --argjson del "$(printf '%s\n' "${del_domains[@]}" | jq -R . | jq -s .)" '
-    .route.rules |= map(
-      if has("domain_suffix") then
-        .domain_suffix |= map(select(INDEX($del) | not))
-      else
-        .
-      end
-    )
-  ' "$CONFIG_FILE" > "$temp_file" && mv "$temp_file" "$CONFIG_FILE"
-  echo -e "\n✅ 域名已删除"
+if [[ -z "$existing_domains" ]]; then
+  echo " - （无）"
 else
-  echo "❌ 无效的选项，退出"
-  exit 1
+  printf " - %s\n" $existing_domains
 fi
 
-# 重启服务
-echo -e "\n🔄 正在尝试重启 sing-box..."
-pkill -f "$SINGBOX_BIN run" 2>/dev/null || true
-sleep 1
-nohup $SINGBOX_BIN run -c "$CONFIG_FILE" &>/dev/null &
-sleep 2
-pgrep -f "$SINGBOX_BIN run" > /dev/null && echo "✅ sing-box 启动成功" || echo "❌ sing-box 启动失败"
+while true; do
+  echo -e "\n请选择操作："
+  echo "1）添加域名"
+  echo "2）删除域名"
+  echo "0）退出"
+  read -p $'\n请输入选项（默认 0）: ' option
+  option=${option:-0}
 
-# 展示结果
-echo -e "\n🌐 最新所有分流域名："
-jq -r '.route.rules[] | select(.domain_suffix) | .domain_suffix[]' "$CONFIG_FILE" | sed 's/^/ - /'
+  if [[ "$option" == "0" ]]; then
+    echo "👋 已退出脚本"
+    exit 0
+  fi
+
+  if [[ "$option" == "1" ]]; then
+    read -p $'\n请输入要添加的分流域名（多个用空格分隔）: ' -a new_domains
+    if [ ${#new_domains[@]} -eq 0 ]; then
+      echo "未输入任何域名，退出。"
+      exit 0
+    fi
+    temp_file=$(mktemp)
+    jq --argjson new "$(printf '%s\n' "${new_domains[@]}" | jq -R . | jq -s .)" '
+      .route.rules |= map(
+        if has("domain_suffix") then
+          .domain_suffix += $new | .domain_suffix |= unique
+        else . end
+      )
+    ' "$CONFIG_FILE" > "$temp_file" && mv "$temp_file" "$CONFIG_FILE"
+    echo -e "\n✅ 域名已添加"
+
+  elif [[ "$option" == "2" ]]; then
+    read -p $'\n请输入要删除的分流域名（多个用空格分隔）: ' -a del_domains
+    if [ ${#del_domains[@]} -eq 0 ]; then
+      echo "未输入任何域名，退出。"
+      exit 0
+    fi
+    temp_file=$(mktemp)
+    jq --argjson del "$(printf '%s\n' "${del_domains[@]}" | jq -R . | jq -s .)" '
+      .route.rules |= map(
+        if has("domain_suffix") then
+          .domain_suffix |= map(select(INDEX($del) | not))
+        else . end
+      )
+    ' "$CONFIG_FILE" > "$temp_file" && mv "$temp_file" "$CONFIG_FILE"
+    echo -e "\n✅ 域名已删除"
+
+  else
+    echo "❌ 无效的选项，退出"
+    exit 1
+  fi
+
+  echo -e "\n🔄 正在尝试重启 sing-box..."
+  pkill -f "$SINGBOX_BIN run" 2>/dev/null || true
+  sleep 1
+  nohup $SINGBOX_BIN run -c "$CONFIG_FILE" &>/dev/null &
+  sleep 2
+  pgrep -f "$SINGBOX_BIN run" > /dev/null && echo "✅ sing-box 启动成功" || echo "❌ sing-box 启动失败"
+
+  echo -e "\n🌐 最新所有分流域名："
+  jq -r '.route.rules[] | select(.domain_suffix) | .domain_suffix[]' "$CONFIG_FILE" | sed 's/^/ - /'
+
+done
