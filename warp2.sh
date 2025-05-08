@@ -115,3 +115,13 @@ if ! jq -e '.outbounds[]? | select(.tag=="wireguard_out")' "$CONFIG_FILE" >/dev/
   echo "🔑 私钥：$WG_PRIV_KEY"
   echo "🔓 公钥：$WG_PUB_KEY"
 fi
+
+# 🧩 添加 direct 出站（兜底用）
+if ! jq -e '.outbounds[]? | select(.tag=="direct")' "$CONFIG_FILE" >/dev/null; then
+  jq '.outbounds += [{"type":"direct","tag":"direct"}]' "$CONFIG_FILE" > "$CONFIG_FILE.tmp" && mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
+fi
+
+# 🧩 添加默认兜底分流规则（如无则追加）
+if ! jq -e '.route.rules[]? | select(.outbound=="direct")' "$CONFIG_FILE" >/dev/null; then
+  jq 'if .route then .route.rules += [{"outbound": "direct"}] else . + {"route": {"rules": [{"outbound": "direct"}]}} end' "$CONFIG_FILE" > "$CONFIG_FILE.tmp" && mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
+fi
