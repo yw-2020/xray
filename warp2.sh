@@ -8,13 +8,7 @@ if ! command -v wg &> /dev/null; then
   apt update && apt install -y wireguard-tools
 fi
 
-# ✅ 检查是否已安装 wireguard
-if ! command -v wg-quick &> /dev/null; then
-  echo "📦 正在安装 wireguard 主程序..."
-  apt update && apt install -y wireguard
-fi
-
-# 📂 1. 初始化
+# 📂 初始化变量
 CONFIG_DIR="/etc/v2ray-agent/sing-box/conf"
 CONFIG_FILE="$CONFIG_DIR/config.json"
 WG_PRIV_KEY="$(wg genkey)"
@@ -26,32 +20,55 @@ WARP_ENDPOINT="162.159.192.1"
 WARP_PORT=2408
 LOCAL_IPV4="172.16.0.2/32"
 
-# ✨ 创建 wgcf 接口配置
-WGCF_CONF="/etc/wireguard/wgcf.conf"
-mkdir -p /etc/wireguard
-cat > "$WGCF_CONF" <<EOF
-[Interface]
-PrivateKey = $WG_PRIV_KEY
-Address = $LOCAL_IPV4
-DNS = 1.1.1.1
-
-[Peer]
-PublicKey = $WARP_PUB_KEY
-Endpoint = $WARP_ENDPOINT:$WARP_PORT
-AllowedIPs = 0.0.0.0/0
-PersistentKeepalive = 25
-EOF
-
-# 🔄 启动 WireGuard 接口
-if ip link show wgcf &> /dev/null; then
-  wg-quick down wgcf
-fi
-wg-quick up wgcf
-
 # 🧠 检查主 config.json 是否存在
 if [[ ! -f "$CONFIG_FILE" ]]; then
   echo "❌ 找不到 $CONFIG_FILE，请先配置好你的主配置文件 (如 VLESS) 后再运行本脚本。"
   exit 1
+fi
+
+# 🧩 添加 WireGuard outbound（只添加一次）
+if ! jq -e '.outbounds[]? | select(.tag=="wireguard_out")' "$CONFIG_FILE" >/dev/null; then
+  jq \
+    --arg endpoint "$WARP_ENDPOINT" \
+    --arg port "$WARP_PORT" \
+    --arg priv "$WG_PRIV_KEY" \
+    --arg pub "$WARP_PUB_KEY" \
+    --arg local "$LOCAL_IPV4" \
+    'if .outbounds then .outbounds += [{
+      "type": "wireguard",
+      "tag": "wireguard_out",
+      "server": $endpoint,
+      "server_port": ($port|tonumber),
+      "local_address": [$local],
+      "private_key": $priv,
+      "peer_public_key": $pub,
+      "reserved": "",
+      "mtu": 1280
+    }] else . + {"outbounds": [{
+      "type": "wireguard",
+      "tag": "wireguard_out",
+      "server": $endpoint,
+      "server_port": ($port|tonumber),
+      "local_address": [$local],
+      "private_key": $priv,
+      "peer_public_key": $pub,
+      "reserved": "",
+      "mtu": 1280
+    }]} end' "$CONFIG_FILE" > "$CONFIG_FILE.tmp" && mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
+
+  echo -e "\n✅ WireGuard 出站已写入 $CONFIG_FILE"
+  echo "🔑 私钥：$WG_PRIV_KEY"
+  echo "🔓 公钥：$WG_PUB_KEY"
+fi
+
+# 🧩 添加 direct 出站（兜底用）
+if ! jq -e '.outbounds[]? | select(.tag=="direct")' "$CONFIG_FILE" >/dev/null; then
+  jq '.outbounds += [{"type":"direct","tag":"direct"}]' "$CONFIG_FILE" > "$CONFIG_FILE.tmp" && mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
+fi
+
+# 🧩 添加默认兜底分流规则（如无则追加）
+if ! jq -e '.route.rules[]? | select(.outbound=="direct")' "$CONFIG_FILE" >/dev/null; then
+  jq 'if .route then .route.rules += [{"outbound": "direct"}] else . + {"route": {"rules": [{"outbound": "direct"}]}} end' "$CONFIG_FILE" > "$CONFIG_FILE.tmp" && mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
 fi
 
 # 🧩 操作菜单
@@ -108,48 +125,3 @@ while true; do
       ;;
   esac
 done
-
-# 🧩 添加 WireGuard outbound（只添加一次）
-if ! jq -e '.outbounds[]? | select(.tag=="wireguard_out")' "$CONFIG_FILE" >/dev/null; then
-  jq \
-    --arg endpoint "$WARP_ENDPOINT" \
-    --arg port "$WARP_PORT" \
-    --arg priv "$WG_PRIV_KEY" \
-    --arg pub "$WARP_PUB_KEY" \
-    --arg local "$LOCAL_IPV4" \
-    'if .outbounds then .outbounds += [{
-      "type": "wireguard",
-      "tag": "wireguard_out",
-      "server": $endpoint,
-      "server_port": ($port|tonumber),
-      "local_address": [$local],
-      "private_key": $priv,
-      "peer_public_key": $pub,
-      "reserved": "",
-      "mtu": 1280
-    }] else . + {"outbounds": [{
-      "type": "wireguard",
-      "tag": "wireguard_out",
-      "server": $endpoint,
-      "server_port": ($port|tonumber),
-      "local_address": [$local],
-      "private_key": $priv,
-      "peer_public_key": $pub,
-      "reserved": "",
-      "mtu": 1280
-    }]} end' "$CONFIG_FILE" > "$CONFIG_FILE.tmp" && mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
-
-  echo -e "\n✅ WireGuard 出站已写入 $CONFIG_FILE"
-  echo "🔑 私钥：$WG_PRIV_KEY"
-  echo "🔓 公钥：$WG_PUB_KEY"
-fi
-
-# 🧩 添加 direct 出站（兜底用）
-if ! jq -e '.outbounds[]? | select(.tag=="direct")' "$CONFIG_FILE" >/dev/null; then
-  jq '.outbounds += [{"type":"direct","tag":"direct"}]' "$CONFIG_FILE" > "$CONFIG_FILE.tmp" && mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
-fi
-
-# 🧩 添加默认兜底分流规则（如无则追加）
-if ! jq -e '.route.rules[]? | select(.outbound=="direct")' "$CONFIG_FILE" >/dev/null; then
-  jq 'if .route then .route.rules += [{"outbound": "direct"}] else . + {"route": {"rules": [{"outbound": "direct"}]}} end' "$CONFIG_FILE" > "$CONFIG_FILE.tmp" && mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
-fi
