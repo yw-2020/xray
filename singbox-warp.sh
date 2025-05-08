@@ -1,6 +1,6 @@
 #!/bin/bash
 # Auto-Setup Warp Split Tunneling with sing-box (v2ray-agent edition)
-# 支持首次安装和后续追加、删除分流域名，完全兼容 v2ray-agent 自带 sing-box 路径
+# 支持首次安装、后续追加、删除分流域名，完全兼容 v2ray-agent 自带 sing-box 路径
 
 set -e
 
@@ -19,17 +19,25 @@ if ! command -v jq &>/dev/null; then
   apt update && apt install -y jq
 fi
 
-# 获取现有域名列表
+# 自动补全 domain_suffix 配置
+rules_count=$(jq '(.route.rules // []) | length' "$CONFIG_FILE")
+if [ "$rules_count" -eq 0 ] || ! jq -e '.route.rules[] | select(.domain_suffix)' "$CONFIG_FILE" >/dev/null 2>&1; then
+  echo "🔧 初始化 domain_suffix 分流规则..."
+  temp_file=$(mktemp)
+  jq 'if .route.rules then .route.rules += [{"domain_suffix": []}] else .route.rules = [{"domain_suffix": []}] end' "$CONFIG_FILE" > "$temp_file" && mv "$temp_file" "$CONFIG_FILE"
+fi
+
+# 获取当前域名列表
 existing_domains=$(jq -r '.route.rules[] | select(.domain_suffix) | .domain_suffix[]' "$CONFIG_FILE" 2>/dev/null || true)
 echo -e "\n🌐 当前已有分流域名："
 printf " - %s\n" $existing_domains
 
-# 提供菜单：添加或删除
+# 操作菜单
 echo -e "\n请选择操作："
-echo "1) 添加域名"
-echo "2) 删除域名"
-echo "0) 退出"
-read -p $'\n请输入选项 (默认 0): ' option
+echo "1）添加域名"
+echo "2）删除域名"
+echo "0）退出"
+read -p $'\n请输入选项（默认 0）: ' option
 option=${option:-0}
 
 if [[ "$option" == "0" ]]; then
@@ -39,12 +47,10 @@ fi
 
 if [[ "$option" == "1" ]]; then
   read -p $'\n请输入要添加的分流域名（多个用空格分隔）: ' -a new_domains
-
   if [ ${#new_domains[@]} -eq 0 ]; then
     echo "未输入任何域名，退出。"
     exit 0
   fi
-
   temp_file=$(mktemp)
   jq --argjson new "$(printf '%s\n' "${new_domains[@]}" | jq -R . | jq -s .)" '
     .route.rules |= map(
@@ -59,12 +65,10 @@ if [[ "$option" == "1" ]]; then
 
 elif [[ "$option" == "2" ]]; then
   read -p $'\n请输入要删除的分流域名（多个用空格分隔）: ' -a del_domains
-
   if [ ${#del_domains[@]} -eq 0 ]; then
     echo "未输入任何域名，退出。"
     exit 0
   fi
-
   temp_file=$(mktemp)
   jq --argjson del "$(printf '%s\n' "${del_domains[@]}" | jq -R . | jq -s .)" '
     .route.rules |= map(
@@ -83,10 +87,12 @@ fi
 
 # 重启服务
 echo -e "\n🔄 正在尝试重启 sing-box..."
-$SINGBOX_BIN run -c "$CONFIG_FILE" &>/dev/null &
+pkill -f "$SINGBOX_BIN run" 2>/dev/null || true
+sleep 1
+nohup $SINGBOX_BIN run -c "$CONFIG_FILE" &>/dev/null &
 sleep 2
 pgrep -f "$SINGBOX_BIN run" > /dev/null && echo "✅ sing-box 启动成功" || echo "❌ sing-box 启动失败"
 
 # 展示结果
-echo -e "\n🌐 最新分流域名："
+echo -e "\n🌐 最新所有分流域名："
 jq -r '.route.rules[] | select(.domain_suffix) | .domain_suffix[]' "$CONFIG_FILE" | sed 's/^/ - /'
