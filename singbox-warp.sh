@@ -1,185 +1,84 @@
 #!/bin/bash
-# Auto-Setup Warp Split Tunneling with sing-box (v2ray-agent edition)
-# 支持首次安装、后续追加、删除分流域名，完全兼容 v2ray-agent 自带 sing-box 路径，并配置 systemd 自启动
-
-set -e
 
 CONFIG_FILE="/etc/v2ray-agent/sing-box/conf/config.json"
-SINGBOX_BIN="/etc/v2ray-agent/sing-box/sing-box"
-SERVICE_FILE="/etc/systemd/system/sing-box.service"
+BACKUP_FILE="/etc/v2ray-agent/sing-box/conf/config.bak.json"
 
-# 检查 jq 工具
-if ! command -v jq &>/dev/null; then
-  echo "未找到 jq ，正在安装..."
-  apt update && apt install -y jq
-fi
-
-# 若配置文件不存在，则创建空模板
-if [ ! -f "$CONFIG_FILE" ]; then
-  echo "⚠️ 未检测到 config.json，已为你创建空配置..."
-  mkdir -p "$(dirname "$CONFIG_FILE")"
-  cat > "$CONFIG_FILE" <<EOF
-{
-  "log": {
-    "disabled": false,
-    "level": "info",
-    "output": "console"
-  },
-  "route": {
-    "rules": [
-      {
-        "domain_suffix": [],
-        "outbound": "warp"
-      }
-    ]
-  }
-}
-EOF
-fi
-
-# 初始化配置结构
-init_config() {
-  temp_file=$(mktemp)
-  jq 'if .route == null then .route = {} else . end |
-      if (.route.rules | type) != "array" then .route.rules = [] else . end |
-      .route.rules |= map(
-        if (.domain_suffix | type != "array") then .domain_suffix = [] else . end
-      )' "$CONFIG_FILE" > "$temp_file" && mv "$temp_file" "$CONFIG_FILE"
+# 自动备份
+backup_config() {
+    cp "$CONFIG_FILE" "$BACKUP_FILE"
 }
 
-# 配置 systemd 自启动
-init_systemd() {
-  if [ ! -f "$SERVICE_FILE" ]; then
-    echo "🔧 正在写入 systemd 服务配置..."
-    cat > "$SERVICE_FILE" <<EOF
-[Unit]
-Description=Sing-Box
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=$SINGBOX_BIN run -c $CONFIG_FILE
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-EOF
-    systemctl daemon-reload
-    systemctl enable sing-box
-    echo "✅ 已配置 sing-box 自启动服务"
-  fi
+# 获取当前 warp 域名列表
+list_domains() {
+    echo "当前走 WARP 的域名有："
+    jq -r '.route.rules[] | select(.outbound=="warp") | .domain[]' "$CONFIG_FILE"
 }
 
-init_config
-init_systemd
+# 添加域名
+add_domain() {
+    read -p "请输入要添加的域名（如 scholar.google.com）: " domain
+    if [[ -z "$domain" ]]; then echo "❌ 域名不能为空"; return; fi
 
-while true; do
-  echo -e "\n🌐 当前已有分流域名："
-  domain_list=( $(jq -r '.route.rules[]? | select(.domain_suffix) | .domain_suffix[]?' "$CONFIG_FILE" 2>/dev/null) )
-  if [ ${#domain_list[@]} -eq 0 ]; then
-    echo " - （无）"
-  else
-    for i in "${!domain_list[@]}"; do
-      printf " [%d] %s\n" "$i" "${domain_list[$i]}"
-    done
-  fi
-
-  echo -e "\n请选择操作："
-  echo "1）添加域名"
-  echo "2）删除域名"
-  echo "0）退出"
-  read -p $'\n请输入选项（默认 0）: ' option
-  option=${option:-0}
-
-  if [[ "$option" == "0" ]]; then
-    echo "👋 已退出脚本"
-    exit 0
-  fi
-
-  if [[ "$option" == "1" ]]; then
-    read -p $'\n请输入要添加的分流域名（多个用英文逗号","分隔）: ' domain_input
-    IFS=',' read -ra raw_domains <<< "$domain_input"
-    new_domains=()
-    for d in "${raw_domains[@]}"; do
-      trimmed=$(echo "$d" | xargs)
-      if [ -n "$trimmed" ]; then
-        new_domains+=("$trimmed")
-      fi
-    done
-    if [ ${#new_domains[@]} -eq 0 ]; then
-      echo "未输入任何有效域名，退出。"
-      exit 0
+    # 查找是否已有 outbound 为 warp 的规则
+    if jq -e '.route.rules[] | select(.outbound=="warp")' "$CONFIG_FILE" > /dev/null; then
+        echo "✅ 找到已有 warp 规则，正在追加域名..."
+        jq --arg domain "$domain" '
+            (.route.rules[] | select(.outbound=="warp").domain) += [$domain]
+        ' "$CONFIG_FILE" > /tmp/config.tmp && mv /tmp/config.tmp "$CONFIG_FILE"
+    else
+        echo "⚠️ 未找到 warp 规则，正在新建..."
+        jq --arg domain "$domain" '
+            .route.rules += [{
+                "domain": [$domain],
+                "outbound": "warp"
+            }]
+        ' "$CONFIG_FILE" > /tmp/config.tmp && mv /tmp/config.tmp "$CONFIG_FILE"
     fi
-    existing_domains=($(jq -r '.route.rules[]? | select(.domain_suffix) | .domain_suffix[]?' "$CONFIG_FILE" 2>/dev/null))
-    merged_domains=("${existing_domains[@]}" "${new_domains[@]}")
-    unique_domains=($(printf "%s\n" "${merged_domains[@]}" | sort -u))
-    new_json=$(printf '%s\n' "${unique_domains[@]}" | jq -R . | jq -s .)
-    temp_file=$(mktemp)
-    jq --argjson updated "$new_json" '
-      .route.rules = [
-        {
-          "domain_suffix": $updated,
-          "outbound": "warp"
-        }
-      ]' "$CONFIG_FILE" > "$temp_file" && mv "$temp_file" "$CONFIG_FILE"
+    echo "✅ 已添加 $domain"
+}
 
-    echo -e "\n✅ 域名已添加"
+# 删除域名
+delete_domain() {
+    read -p "请输入要删除的域名（如 scholar.google.com）: " domain
+    if [[ -z "$domain" ]]; then echo "❌ 域名不能为空"; return; fi
 
-  elif [[ "$option" == "2" ]]; then
-    if [ ${#domain_list[@]} -eq 0 ]; then
-      echo "⚠️ 没有可删除的域名。"
-      continue
-    fi
-    echo -e "\n当前分流域名："
-    for i in "${!domain_list[@]}"; do
-      printf " [%d] %s\n" "$i" "${domain_list[$i]}"
+    jq --arg domain "$domain" '
+        .route.rules |= map(
+            if .outbound == "warp" then
+                .domain |= map(select(. != $domain))
+            else .
+            end
+        )
+    ' "$CONFIG_FILE" > /tmp/config.tmp && mv /tmp/config.tmp "$CONFIG_FILE"
+
+    echo "✅ 已尝试删除 $domain"
+}
+
+# 重启 sing-box
+reload_singbox() {
+    systemctl restart sing-box && echo "✅ 已重载 sing-box" || echo "❌ 重载失败"
+}
+
+# 主菜单
+main_menu() {
+    while true; do
+        echo -e "\n==== WARP 域名分流管理脚本 ===="
+        echo "1. 查看当前域名"
+        echo "2. 添加新域名"
+        echo "3. 删除已存在域名"
+        echo "4. 重载 sing-box"
+        echo "5. 退出"
+        read -p "请选择操作（1-5）: " choice
+
+        case "$choice" in
+            1) list_domains ;;
+            2) backup_config; add_domain; reload_singbox ;;
+            3) backup_config; delete_domain; reload_singbox ;;
+            4) reload_singbox ;;
+            5) echo "退出"; break ;;
+            *) echo "无效选项，请输入 1-5" ;;
+        esac
     done
+}
 
-    read -p $'\n请输入要删除的编号（多个用英文逗号","分隔）: ' indexes_input
-    IFS=',' read -ra del_indexes <<< "$indexes_input"
-
-    valid_indexes=()
-    for idx in "${del_indexes[@]}"; do
-      idx=$(echo "$idx" | xargs)
-      if [[ "$idx" =~ ^[0-9]+$ ]] && [ "$idx" -ge 0 ] && [ "$idx" -lt ${#domain_list[@]} ]; then
-        valid_indexes+=("$idx")
-      fi
-    done
-
-    filtered_list=()
-    for i in "${!domain_list[@]}"; do
-      skip=false
-      for j in "${valid_indexes[@]}"; do
-        if [ "$i" == "$j" ]; then
-          skip=true
-          break
-        fi
-      done
-      if [ "$skip" = false ]; then
-        filtered_list+=("${domain_list[$i]}")
-      fi
-    done
-
-    new_json=$(printf '%s\n' "${filtered_list[@]}" | jq -R . | jq -s .)
-    temp_file=$(mktemp)
-    jq --argjson updated "$new_json" '
-      .route.rules = [
-        {
-          "domain_suffix": $updated,
-          "outbound": "warp"
-        }
-      ]' "$CONFIG_FILE" > "$temp_file" && mv "$temp_file" "$CONFIG_FILE"
-
-    echo -e "\n✅ 指定域名已删除"
-
-  else
-    echo "❌ 无效的选项，退出"
-    exit 1
-  fi
-
-  echo -e "\n🔄 正在通过 systemd 重启 sing-box..."
-  systemctl restart sing-box && echo "✅ sing-box 启动成功" || {
-    echo "❌ sing-box 启动失败"
-    echo -e "\n🧨 请执行 journalctl -eu sing-box 查看具体报错日志"
-  }
-done
+main_menu
