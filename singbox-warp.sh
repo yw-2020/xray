@@ -1,79 +1,97 @@
 #!/bin/bash
 
 CONFIG_PATH="/etc/v2ray-agent/sing-box/conf/config.json"
+OUTBOUND_TAG="warp-out"
 
-ensure_outbounds_and_routes() {
-  if ! jq '.outbounds' "$CONFIG_PATH" >/dev/null 2>&1; then
-    jq '. + {outbounds: []}' "$CONFIG_PATH" > tmp && mv tmp "$CONFIG_PATH"
-  fi
-
-  if jq '.outbounds[]?.tag' "$CONFIG_PATH" | grep -q '"warp-out"'; then
-    :
-  else
-    jq '.outbounds += [{"type":"socks","tag":"warp-out","server":"127.0.0.1","server_port":40000}]' "$CONFIG_PATH" > tmp && mv tmp "$CONFIG_PATH"
-  fi
-
-  if jq '.outbounds[]?.tag' "$CONFIG_PATH" | grep -q '"direct-out"'; then
-    :
-  else
-    jq '.outbounds += [{"type":"direct","tag":"direct-out"}]' "$CONFIG_PATH" > tmp && mv tmp "$CONFIG_PATH"
-  fi
-
-  if ! jq '.route' "$CONFIG_PATH" >/dev/null 2>&1; then
-    jq '. + {route: {rules: []}}' "$CONFIG_PATH" > tmp && mv tmp "$CONFIG_PATH"
-  fi
-
-  if ! jq '.route.rules[]?.outbound' "$CONFIG_PATH" | grep -q '"warp-out"'; then
-    jq '.route.rules += [{"domain_suffix": [], "outbound": "warp-out"}]' "$CONFIG_PATH" > tmp && mv tmp "$CONFIG_PATH"
-  fi
-
-  if ! jq '.route.rules[]?.outbound' "$CONFIG_PATH" | grep -q '"direct-out"'; then
-    jq '.route.rules += [{"outbound": "direct-out"}]' "$CONFIG_PATH" > tmp && mv tmp "$CONFIG_PATH"
-  fi
+check_dependencies() {
+    if ! command -v jq &>/dev/null; then
+        echo "❌ 请先安装 jq 工具: apt install -y jq"
+        exit 1
+    fi
 }
 
-list_domains() {
-  echo "当前使用 WARP 分流的域名："
-  jq -r '.route.rules[] | select(.outbound == "warp-out") | .domain_suffix[]' "$CONFIG_PATH" | nl
+load_domains() {
+    jq -r --arg tag "$OUTBOUND_TAG" '
+      .route.rules[] | select(.outbound == $tag) | .domain_suffix[]?' "$CONFIG_PATH"
 }
 
 add_domain() {
-  read -rp "请输入要添加的域名（不含 https://）： " domain
-  [ -z "$domain" ] && echo "无效输入" && return
-  jq --arg d "$domain" '(.route.rules[] | select(.outbound=="warp-out").domain_suffix) += [$d]' "$CONFIG_PATH" > tmp && mv tmp "$CONFIG_PATH"
-  echo "已添加：$domain"
+    read -rp "请输入要添加的域名（如 example.com）: " domain
+    [[ -z "$domain" ]] && echo "❌ 域名不能为空" && return
+
+    if load_domains | grep -qx "$domain"; then
+        echo "⚠️ 域名已存在: $domain"
+        return
+    fi
+
+    tmp=$(mktemp)
+    jq --arg tag "$OUTBOUND_TAG" --arg domain "$domain" '
+      .route.rules |= (
+        map(
+          if .outbound == $tag then
+            .domain_suffix += [$domain]
+          else .
+          end
+        )
+      )
+    ' "$CONFIG_PATH" > "$tmp" && mv "$tmp" "$CONFIG_PATH"
+
+    echo "✅ 域名已添加: $domain"
+    restart_singbox
 }
 
 delete_domain() {
-  list_domains
-  total=$(jq -r '.route.rules[] | select(.outbound == "warp-out") | .domain_suffix | length' "$CONFIG_PATH")
-  [ "$total" -eq 0 ] && echo "当前无域名可删。" && return
-  read -rp "请输入要删除的域名编号： " idx
-  if [[ "$idx" =~ ^[0-9]+$ ]] && [ "$idx" -ge 1 ] && [ "$idx" -le "$total" ]; then
-    jq --argjson i "$((idx - 1))" '(.route.rules[] | select(.outbound=="warp-out").domain_suffix) |= (.[:$i] + .[$i+1:])' "$CONFIG_PATH" > tmp && mv tmp "$CONFIG_PATH"
-    echo "已删除编号 $idx"
-  else
-    echo "无效编号"
-  fi
+    echo "📋 当前分流域名列表："
+    mapfile -t domains < <(load_domains)
+    for i in "${!domains[@]}"; do
+        printf "%2d. %s\n" "$((i+1))" "${domains[$i]}"
+    done
+
+    read -rp "请输入要删除的域名编号: " index
+    if ! [[ "$index" =~ ^[0-9]+$ ]] || (( index < 1 || index > ${#domains[@]} )); then
+        echo "❌ 输入不合法"
+        return
+    fi
+
+    domain="${domains[$((index-1))]}"
+    tmp=$(mktemp)
+    jq --arg tag "$OUTBOUND_TAG" --arg domain "$domain" '
+      .route.rules |= (
+        map(
+          if .outbound == $tag then
+            .domain_suffix |= map(select(. != $domain))
+          else .
+          end
+        )
+      )
+    ' "$CONFIG_PATH" > "$tmp" && mv "$tmp" "$CONFIG_PATH"
+
+    echo "✅ 域名已删除: $domain"
+    restart_singbox
+}
+
+restart_singbox() {
+    echo "🔄 重启 sing-box..."
+    systemctl restart sing-box && echo "✅ sing-box 已重启"
 }
 
 main() {
-  ensure_outbounds_and_routes
-
-  echo -e "\n请选择操作："
-  echo "1) 查看当前 WARP 域名"
-  echo "2) 添加域名"
-  echo "3) 删除域名"
-  echo "0) 退出"
-  read -rp "输入选项编号: " choice
-
-  case "$choice" in
-    1) list_domains ;;
-    2) add_domain ;;
-    3) delete_domain ;;
-    0) exit 0 ;;
-    *) echo "无效输入" ;;
-  esac
+    check_dependencies
+    while true; do
+        echo -e "\n====== sing-box 分流管理 ======"
+        echo "1. 添加分流域名"
+        echo "2. 删除分流域名"
+        echo "3. 查看当前分流域名"
+        echo "0. 退出"
+        read -rp "请选择操作: " choice
+        case "$choice" in
+            1) add_domain ;;
+            2) delete_domain ;;
+            3) load_domains ;;
+            0) exit 0 ;;
+            *) echo "❌ 无效选项" ;;
+        esac
+    done
 }
 
 main
