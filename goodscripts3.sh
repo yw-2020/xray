@@ -2,7 +2,7 @@
 # 检测区
 # -------------------------------------------------------------
 # 检查系统
-export LANG=en_US.UTF-8  
+export LANG=en_US.UTF-8
 
 echoContent() {
     case $1 in
@@ -43,29 +43,29 @@ checkCentosSELinux() {
 }
 checkSystem() {
     if [[ -n $(find /etc -name "redhat-release") ]] || grep </proc/version -q -i "centos"; then
-        mkdir -p /etc/yum.repos.d  
+        mkdir -p /etc/yum.repos.d
 
         if [[ -f "/etc/centos-release" ]]; then
-            centosVersion=$(rpm -q centos-release | awk -F "[-]" '{print $3}' | awk -F "[.]" '{print $1}')  
+            centosVersion=$(rpm -q centos-release | awk -F "[-]" '{print $3}' | awk -F "[.]" '{print $1}')
 
             if [[ -z "${centosVersion}" ]] && grep </etc/centos-release -q -i "release 8"; then
                 centosVersion=8
             fi
-        fi  
+        fi
 
         release="centos"
         installType='yum -y install'
         removeType='yum -y remove'
         upgrade="yum update -y --skip-broken"
         checkCentosSELinux
-    elif [[ -f "/etc/issue" ]] && grep </etc/issue -q -i "debian" || [[ -f "/proc/version" ]] && grep </etc/issue -q -i "debian" || [[ -f "/etc/os-release" ]] && grep </etc/os-release -q -i "ID=debian"; then
+    elif { [[ -f "/etc/issue" ]] && grep -qi "debian" /etc/issue; } || { [[ -f "/proc/version" ]] && grep -qi "debian" /proc/version;} || { [[ -f "/etc/os-release" ]] && grep -qi "ID=debian" /etc/issue; }; then
         release="debian"
         installType='apt -y install'
         upgrade="apt update"
         updateReleaseInfoChange='apt-get --allow-releaseinfo-change update'
-        removeType='apt -y autoremove'  
+        removeType='apt -y autoremove'
 
-    elif [[ -f "/etc/issue" ]] && grep </etc/issue -q -i "ubuntu" || [[ -f "/proc/version" ]] && grep </etc/issue -q -i "ubuntu"; then
+    elif { [[ -f "/etc/issue" ]] && grep -qi "ubuntu" /etc/issue; } || { [[ -f "/proc/version" ]] && grep -qi "ubuntu" /proc/version; }; then
         release="ubuntu"
         installType='apt -y install'
         upgrade="apt update"
@@ -74,13 +74,13 @@ checkSystem() {
         if grep </etc/issue -q -i "16."; then
             release=
         fi
-    elif [[ -f "/etc/issue" ]] && grep </etc/issue -q -i "Alpine" || [[ -f "/proc/version" ]] && grep </proc/version -q -i "Alpine"; then
+    elif { [[ -f "/etc/issue" ]] && grep -qi "Alpine" /etc/issue; } || { [[ -f "/proc/version" ]] && grep -qi "Alpine" /proc/version; }; then
         release="alpine"
         installType='apk add'
         upgrade="apk update"
-        removeType='apt del'
+        removeType='apk del'
         nginxConfigPath=/etc/nginx/http.d/
-    fi  
+    fi
 
     if [[ -z ${release} ]]; then
         echoContent red "\n本脚本不支持此系统，请将下方日志反馈给开发者\n"
@@ -88,7 +88,7 @@ checkSystem() {
         echoContent yellow "$(cat /proc/version)"
         exit 0
     fi
-}  
+}
 
 # 检查CPU提供商
 checkCPUVendor() {
@@ -119,7 +119,7 @@ checkCPUVendor() {
         xrayCoreCPUVendor="Xray-linux-64"
         v2rayCoreCPUVendor="v2ray-linux-64"
     fi
-}  
+}
 
 # 初始化全局变量
 initVar() {
@@ -4952,11 +4952,10 @@ EOF
         rm /etc/v2ray-agent/sing-box/conf/config/11_VMess_HTTPUpgrade_inbounds.json >/dev/null 2>&1
     fi
     if [[ -z "$3" ]]; then
-        # removeSingBoxConfig wireguard_out_IPv4
-        # removeSingBoxConfig wireguard_out_IPv6
-        removeSingBoxConfig wireguard_out_IPv4_route
-        removeSingBoxConfig wireguard_out_IPv6_route
-        removeSingBoxConfig wireguard_outbound
+        removeSingBoxConfig wireguard_endpoints_IPv4_route
+        removeSingBoxConfig wireguard_endpoints_IPv6_route
+        removeSingBoxConfig wireguard_endpoints_IPv4
+        removeSingBoxConfig wireguard_endpoints_IPv6
 
         removeSingBoxConfig IPv4_out
         removeSingBoxConfig IPv6_out
@@ -5449,60 +5448,24 @@ showAccounts() {
             done < <(echo "${currentCDNAddress}" | tr ',' '\n')
         done
     fi
-    # VLESS XHTTP
-    if echo ${currentInstallProtocolType} | grep -q ",12,"; then
-        echoContent skyBlue "\n================================ VLESS XHTTP TLS [仅CDN推荐] ================================\n"
-
-        jq .inbounds[0].settings.clients//.inbounds[0].users ${configPath}12_VLESS_XHTTP_inbounds.json | jq -c '.[]' | while read -r user; do
-            local email=
-            email=$(echo "${user}" | jq -r .email//.name)
-
-            #            local vlessXHTTPPort=${xrayVLESSRealityXHTTPort}
-            #            if [[ "${coreInstallType}" == "2" ]]; then
-            #                vlessXHTTPPort="${singBoxVLESSWSPort}"
-            #            fi
-            echo
-            local path="${currentPath}xHTTP"
-
-            #            if [[ ${coreInstallType} == "1" ]]; then
-            #                path="/${currentPath}ws"
-            #            elif [[ "${coreInstallType}" == "2" ]]; then
-            #                path="${singBoxVLESSWSPath}"
-            #            fi
-
-            local count=
-            while read -r line; do
-                echoContent skyBlue "\n ---> 账号:${email}${count}"
-                if [[ -n "${line}" ]]; then
-                    defaultBase64Code vlessXHTTP "${xrayVLESSRealityXHTTPort}" "${email}${count}" "$(echo "${user}" | jq -r .id//.uuid)" "${line}" "${path}"
-                    count=$((count + 1))
-                    echo
-                fi
-            done < <(echo "${currentCDNAddress}" | tr ',' '\n')
-        done
-    fi
-
-    # VLESS grpc
-    if echo ${currentInstallProtocolType} | grep -q ",5,"; then
-        echoContent skyBlue "\n=============================== VLESS gRPC TLS [仅CDN推荐]  ===============================\n"
-        jq .inbounds[0].settings.clients ${configPath}06_VLESS_gRPC_inbounds.json | jq -c '.[]' | while read -r user; do
-
+    # trojan grpc
+    if echo ${currentInstallProtocolType} | grep -q ",2,"; then
+        echoContent skyBlue "\n================================  Trojan gRPC TLS [仅CDN推荐]  ================================\n"
+        jq .inbounds[0].settings.clients ${configPath}04_trojan_gRPC_inbounds.json | jq -c '.[]' | while read -r user; do
             local email=
             email=$(echo "${user}" | jq -r .email)
-
             local count=
             while read -r line; do
                 echoContent skyBlue "\n ---> 账号:${email}${count}"
                 echo
                 if [[ -n "${line}" ]]; then
-                    defaultBase64Code vlessgrpc "${currentDefaultPort}" "${email}${count}" "$(echo "${user}" | jq -r .id)" "${line}"
+                    defaultBase64Code trojangrpc "${currentDefaultPort}" "${email}${count}" "$(echo "${user}" | jq -r .password)" "${line}"
                     count=$((count + 1))
                 fi
             done < <(echo "${currentCDNAddress}" | tr ',' '\n')
 
         done
     fi
-
     # VMess WS
     if echo ${currentInstallProtocolType} | grep -q ",3,"; then
         echoContent skyBlue "\n================================ VMess WS TLS [仅CDN推荐]  ================================\n"
@@ -5544,19 +5507,20 @@ showAccounts() {
             defaultBase64Code trojan "${currentDefaultPort}${singBoxTrojanPort}" "${email}" "$(echo "${user}" | jq -r .password)"
         done
     fi
+    # VLESS grpc
+    if echo ${currentInstallProtocolType} | grep -q ",5,"; then
+        echoContent skyBlue "\n=============================== VLESS gRPC TLS [仅CDN推荐]  ===============================\n"
+        jq .inbounds[0].settings.clients ${configPath}06_VLESS_gRPC_inbounds.json | jq -c '.[]' | while read -r user; do
 
-    # trojan grpc
-    if echo ${currentInstallProtocolType} | grep -q ",2,"; then
-        echoContent skyBlue "\n================================  Trojan gRPC TLS [仅CDN推荐]  ================================\n"
-        jq .inbounds[0].settings.clients ${configPath}04_trojan_gRPC_inbounds.json | jq -c '.[]' | while read -r user; do
             local email=
             email=$(echo "${user}" | jq -r .email)
+
             local count=
             while read -r line; do
                 echoContent skyBlue "\n ---> 账号:${email}${count}"
                 echo
                 if [[ -n "${line}" ]]; then
-                    defaultBase64Code trojangrpc "${currentDefaultPort}" "${email}${count}" "$(echo "${user}" | jq -r .password)" "${line}"
+                    defaultBase64Code vlessgrpc "${currentDefaultPort}" "${email}${count}" "$(echo "${user}" | jq -r .id)" "${line}"
                     count=$((count + 1))
                 fi
             done < <(echo "${currentCDNAddress}" | tr ',' '\n')
@@ -5659,6 +5623,27 @@ showAccounts() {
                 if [[ -n "${line}" ]]; then
                     defaultBase64Code vmessHTTPUpgrade "${vmessHTTPUpgradePort}" "${email}${count}" "$(echo "${user}" | jq -r .id//.uuid)" "${line}" "${path}"
                     count=$((count + 1))
+                fi
+            done < <(echo "${currentCDNAddress}" | tr ',' '\n')
+        done
+    fi
+    # VLESS XHTTP
+    if echo ${currentInstallProtocolType} | grep -q ",12,"; then
+        echoContent skyBlue "\n================================ VLESS XHTTP TLS [仅CDN推荐] ================================\n"
+
+        jq .inbounds[0].settings.clients//.inbounds[0].users ${configPath}12_VLESS_XHTTP_inbounds.json | jq -c '.[]' | while read -r user; do
+            local email=
+            email=$(echo "${user}" | jq -r .email//.name)
+            echo
+            local path="${currentPath}xHTTP"
+
+            local count=
+            while read -r line; do
+                echoContent skyBlue "\n ---> 账号:${email}${count}"
+                if [[ -n "${line}" ]]; then
+                    defaultBase64Code vlessXHTTP "${xrayVLESSRealityXHTTPort}" "${email}${count}" "$(echo "${user}" | jq -r .id//.uuid)" "${line}" "${path}"
+                    count=$((count + 1))
+                    echo
                 fi
             done < <(echo "${currentCDNAddress}" | tr ',' '\n')
         done
@@ -6533,7 +6518,7 @@ EOF
 # 脚本快捷方式
 aliasInstall() {
 
-    if [[ -f "$HOME/install.sh" ]] && [[ -d "/etc/v2ray-agent" ]] && grep <"$HOME/install.sh" -q "作者:A Good Man"; then
+    if [[ -f "$HOME/install.sh" ]] && [[ -d "/etc/v2ray-agent" ]] && grep <"$HOME/install.sh" -q "作者:mack-a"; then
         mv "$HOME/install.sh" /etc/v2ray-agent/install.sh
         local vasmaType=
         if [[ -d "/usr/bin/" ]]; then
@@ -6632,13 +6617,11 @@ ipv6Routing() {
             if [[ -n "${singBoxConfigPath}" ]]; then
 
                 removeSingBoxConfig IPv4_out
-                # removeSingBoxConfig wireguard_out_IPv4
-                removeSingBoxConfig wireguard_out_IPv4_route
 
-                # removeSingBoxConfig wireguard_out_IPv6
-                removeSingBoxConfig wireguard_out_IPv6_route
-
-                removeSingBoxConfig wireguard_outbound
+                removeSingBoxConfig wireguard_endpoints_IPv4_route
+                removeSingBoxConfig wireguard_endpoints_IPv6_route
+                removeSingBoxConfig wireguard_endpoints_IPv4
+                removeSingBoxConfig wireguard_endpoints_IPv6
 
                 removeSingBoxConfig socks5_inbound_route
 
@@ -7023,10 +7006,10 @@ showWireGuardDomain() {
 
     # sing-box
     if [[ -n "${singBoxConfigPath}" ]]; then
-        if [[ -f "${singBoxConfigPath}wireguard_out_${type}_route.json" ]]; then
+        if [[ -f "${singBoxConfigPath}wireguard_endpoints_${type}_route.json" ]]; then
             echoContent yellow "sing-box"
-            jq -r -c '.route.rules[]' "${singBoxConfigPath}wireguard_out_${type}_route.json" | jq -r
-        elif [[ ! -f "${singBoxConfigPath}wireguard_out_${type}_route.json" && -f "${singBoxConfigPath}wireguard_out_${type}.json" ]]; then
+            jq -r -c '.route.rules[]' "${singBoxConfigPath}wireguard_endpoints_${type}_route.json" | jq -r
+        elif [[ ! -f "${singBoxConfigPath}wireguard_endpoints_${type}_route.json" && -f "${singBoxConfigPath}wireguard_endpoints_${type}.json" ]]; then
             echoContent yellow "sing-box"
             echoContent green " ---> 已设置warp ${type}全局分流"
         else
@@ -7428,14 +7411,12 @@ setSocks5OutboundRoutingAll() {
         if [[ -n "${singBoxConfigPath}" ]]; then
 
             removeSingBoxConfig IPv4_out
-            # removeSingBoxConfig wireguard_out_IPv4
-            removeSingBoxConfig wireguard_out_IPv4_route
-
             removeSingBoxConfig IPv6_out
-            # removeSingBoxConfig wireguard_out_IPv6
-            removeSingBoxConfig wireguard_out_IPv6_route
 
-            removeSingBoxConfig wireguard_outbound
+            removeSingBoxConfig wireguard_endpoints_IPv4_route
+            removeSingBoxConfig wireguard_endpoints_IPv6_route
+            removeSingBoxConfig wireguard_endpoints_IPv4
+            removeSingBoxConfig wireguard_endpoints_IPv6
 
             removeSingBoxConfig socks5_outbound_route
             removeSingBoxConfig 01_direct_outbound
@@ -8649,6 +8630,9 @@ clashMetaConfig() {
     local url=$1
     local id=$2
     cat <<EOF >"/etc/v2ray-agent/subscribe/clashMetaProfiles/${id}"
+log-level: debug
+mode: rule
+ipv6: true
 mixed-port: 7890
 allow-lan: true
 bind-address: "*"
@@ -8656,22 +8640,14 @@ lan-allowed-ips:
   - 0.0.0.0/0
   - ::/0
 find-process-mode: strict
-mode: rule
+external-controller: 0.0.0.0:9090
 
 geox-url:
   geoip: "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.dat"
   geosite: "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geosite.dat"
   mmdb: "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.metadb"
-
 geo-auto-update: true
 geo-update-interval: 24
-
-log-level: debug
-
-ipv6: true
-
-external-controller: 0.0.0.0:9093
-external-controller-tls: 0.0.0.0:9443
 
 external-controller-cors:
   allow-private-network: true
@@ -8716,9 +8692,9 @@ dns:
     - https://223.5.5.5/dns-query
     - https://1.12.12.12/dns-query
   nameserver-policy:
-    geosite:cn:
-      - https://223.5.5.5/dns-query
-      - https://1.12.12.12/dns-query
+    "geosite:cn,private":
+      - https://doh.pub/dns-query
+      - https://dns.alidns.com/dns-query
 
 proxy-providers:
   ${subscribeSalt}_provider:
@@ -9755,13 +9731,11 @@ singBoxVersionManageMenu() {
 # 主菜单
 menu() {
     cd "$HOME" || exit
-    echoContent skyBlue "\n=============================================================="
-    echoContent green "作者：A Good Man"
-    echoContent green "当前版本：3.0"
+    echoContent red "\n=============================================================="
+    echoContent green "A good man"
+    echoContent green "3.0"
     showInstallStatus
-    checkWgetShowProgress  
-    echoContent skyBlue "\n=============================================================="
-    
+    checkWgetShowProgress
     if [[ -n "${coreInstallType}" ]]; then
         echoContent yellow "1.重新安装"
     else
