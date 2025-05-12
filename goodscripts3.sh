@@ -9732,7 +9732,7 @@ singBoxVersionManageMenu() {
 menu() {
     cd "$HOME" || exit
     echoContent red "\n=============================================================="
-    echoContent green "A good man"
+    echoContent green "Good Man"
     echoContent red "\n=============================================================="
     showInstallStatus
     checkWgetShowProgress
