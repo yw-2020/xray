@@ -9733,7 +9733,7 @@ menu() {
     cd "$HOME" || exit
     echoContent red "\n=============================================================="
     echoContent green "A good man"
-    echoContent green "3.0"
+    echoContent red "\n=============================================================="
     showInstallStatus
     checkWgetShowProgress
     if [[ -n "${coreInstallType}" ]]; then
