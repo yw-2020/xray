@@ -3,7 +3,7 @@ set -Eeuo pipefail
 umask 077
 
 # ======================================================
-# install-argo-clean.sh
+# install-argo-clean-v2.sh
 # Cloudflare Tunnel 多域名自动安装脚本（支持 WS / gRPC / TCP）
 # 作者：白小纯
 #
@@ -19,6 +19,7 @@ umask 077
 #   4. 域名、端口、协议做基础校验
 #   5. 重复安装前备份旧配置和旧服务文件
 #   6. 所有变量和函数使用英文，避免 Bash 不兼容中文变量名
+#   7. 修复新版 cloudflared 的 --token-file help 检测误判问题
 # ======================================================
 
 APP_NAME="Cloudflare Tunnel 多域名自动安装脚本"
@@ -518,19 +519,14 @@ generate_config() {
   info "配置文件写入完成。"
 }
 
-cloudflared_supports_token_file() {
-  "$CLOUD_BIN" tunnel run --help 2>&1 | grep -q -- '--token-file'
-}
-
 build_exec_cmd() {
   if [ "${CREDENTIAL_MODE:-}" = "1" ]; then
-    if cloudflared_supports_token_file; then
-      # 安全做法：Token 不进入 systemd ExecStart
-      EXEC_CMD="${CLOUD_BIN} tunnel run --token-file ${TOKEN_FILE}"
-    else
-      # 理论上不会走到这里，因为本脚本会下载新版 cloudflared
-      die "当前 cloudflared 不支持 --token-file。请更新 cloudflared 后重试。"
-    fi
+    # Token 模式：
+    # 不再通过 `cloudflared tunnel run --help | grep -- --token-file` 判断。
+    # 部分新版 cloudflared 的 help 输出不会稳定展示该参数，容易误判。
+    # Cloudflare 官方文档说明 2025.4.0+ 支持 --token-file；脚本下载 latest 时直接使用即可。
+    # 如果用户手动指定了很旧版本，服务启动阶段会给出真实错误日志。
+    EXEC_CMD="${CLOUD_BIN} tunnel run --token-file ${TOKEN_FILE}"
   else
     if [ -n "${TUNNEL_ID:-}" ]; then
       EXEC_CMD="${CLOUD_BIN} tunnel --config ${CONFIG_FILE} run ${TUNNEL_ID}"
