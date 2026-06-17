@@ -2,25 +2,6 @@
 set -Eeuo pipefail
 umask 077
 
-# ======================================================
-# install-argo-clean-v2.sh
-# Cloudflare Tunnel 多域名自动安装脚本（支持 WS / gRPC / TCP）
-# 作者：白小纯
-#
-# 说明：
-#   本脚本保留原安装流程：
-#   菜单 -> 安装/卸载/退出 -> 输入域名数量 -> 域名/端口/传输方式
-#   -> 输入 Token 或 credentials JSON -> 生成 config.yml -> 创建 systemd 服务
-#
-# 安全改动：
-#   1. 去除广告信息
-#   2. Token 输入隐藏
-#   3. Token 优先使用 --token-file，不直接写入 ExecStart
-#   4. 域名、端口、协议做基础校验
-#   5. 重复安装前备份旧配置和旧服务文件
-#   6. 所有变量和函数使用英文，避免 Bash 不兼容中文变量名
-#   7. 修复新版 cloudflared 的 --token-file help 检测误判问题
-# ======================================================
 
 APP_NAME="Cloudflare Tunnel 多域名自动安装脚本"
 AUTHOR_NAME="白小纯"
