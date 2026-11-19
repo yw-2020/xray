@@ -998,43 +998,21 @@ showInstallStatus() {
         # 读取协议类型
         readInstallProtocolType
 
-        if [[ -n ${currentInstallProtocolType} ]]; then
-            echoContent yellow "已安装协议: \c"
-        fi
-        if echo ${currentInstallProtocolType} | grep -q ",0,"; then
-            echoContent yellow "VLESS+TCP[TLS_Vision] \c"
-        fi
-
-        if echo ${currentInstallProtocolType} | grep -q ",1,"; then
-            echoContent yellow "VLESS+WS[TLS] \c"
-        fi
-
-        if echo ${currentInstallProtocolType} | grep -q ",2,"; then
-            echoContent yellow "Trojan+gRPC[TLS] \c"
-        fi
-
-        if echo ${currentInstallProtocolType} | grep -q ",3,"; then
-            echoContent yellow "VMess+WS[TLS] \c"
-        fi
-
-        if echo ${currentInstallProtocolType} | grep -q ",4,"; then
-            echoContent yellow "Trojan+TCP[TLS] \c"
-        fi
-
-        if echo ${currentInstallProtocolType} | grep -q ",5,"; then
-            echoContent yellow "VLESS+gRPC[TLS] \c"
-        fi
-        if echo ${currentInstallProtocolType} | grep -q ",6,"; then
-            echoContent yellow "Hysteria2 \c"
-        fi
-        if echo ${currentInstallProtocolType} | grep -q ",7,"; then
-            echoContent yellow "VLESS+Reality+Vision \c"
-        fi
-        if echo ${currentInstallProtocolType} | grep -q ",8,"; then
-            echoContent yellow "VLESS+Reality+gRPC \c"
-        fi
-        if echo ${currentInstallProtocolType} | grep -q ",9,"; then
-            echoContent yellow "Tuic \c"
+        local -a protocolNames=(
+            'VLESS+TCP[TLS_Vision]' 'VLESS+WS[TLS]' 'Trojan+gRPC[TLS]'
+            'VMess+WS[TLS]' 'Trojan+TCP[TLS]' 'VLESS+gRPC[TLS]'
+            'Hysteria2' 'VLESS+Reality+Vision' 'VLESS+Reality+gRPC' 'Tuic'
+            'Naive' 'VMess+TLS+HTTPUpgrade' 'VLESS+XHTTP+TLS'
+        )
+        local -a installedProtocols=()
+        local protocol
+        for protocol in "${!protocolNames[@]}"; do
+            if [[ "${currentInstallProtocolType}" == *",${protocol},"* ]]; then
+                installedProtocols+=("${protocolNames[protocol]}")
+            fi
+        done
+        if (( ${#installedProtocols[@]} > 0 )); then
+            echoContent yellow "已安装协议: ${installedProtocols[*]}"
         fi
     fi
 }
@@ -1050,16 +1028,6 @@ cleanUp() {
         rm -rf /etc/v2ray-agent/sing-box/conf/config/* >/dev/null 2>&1
     fi
 }
-wdbxcInstallSelf "$@" || exit 1
-initVar "$1"
-checkSystem
-checkCPUVendor
-
-readInstallType
-readInstallProtocolType
-readConfigHostPathUUID
-readCustomPort
-readSingBoxConfig
 # -------------------------------------------------------------
 
 # 初始化安装目录
@@ -9908,5 +9876,17 @@ menu() {
         ;;
     esac
 }
-cronFunction
-menu
+{
+    wdbxcInstallSelf "$@" || exit 1
+    initVar "$1"
+    checkSystem
+    checkCPUVendor
+
+    readInstallType
+    readInstallProtocolType
+    readConfigHostPathUUID
+    readCustomPort
+    readSingBoxConfig
+    cronFunction
+    menu
+}
