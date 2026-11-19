@@ -58,7 +58,12 @@ wdbxcInstallSelf() {
 # 检测区
 # -------------------------------------------------------------
 # 检查系统
-export LANG=en_US.UTF-8
+wdbxcSetLocale() {
+    local availableLocale
+    availableLocale=$(LC_ALL=C locale -a 2>/dev/null | awk 'tolower($0) ~ /^(c|en_us)[.]utf-?8$/ {print; exit}')
+    export LANG="${availableLocale:-C}"
+    export LC_ALL="${LANG}"
+}
 
 echoContent() {
     case $1 in
@@ -313,7 +318,11 @@ initVar() {
     btDomain=
     # nginx配置文件路径
     nginxConfigPath=/etc/nginx/conf.d/
-    nginxStaticPath=/usr/share/nginx/html/
+    nginxStaticPath=/etc/v2ray-agent/www/
+    if [[ ! -d "${nginxStaticPath}" && -f /usr/share/nginx/html/check ]] &&
+        [[ -x /etc/v2ray-agent/sing-box/sing-box || -x /etc/v2ray-agent/xray/xray ]]; then
+        nginxStaticPath=/usr/share/nginx/html/
+    fi
 
     # 是否为预览版
     prereleaseStatus=false
@@ -726,6 +735,20 @@ readInstallAlpn() {
 }
 
 # 检查防火墙
+wdbxcRecordInstallOwnership() {
+    local marker ownershipPath=/etc/v2ray-agent/.install-ownership
+    mkdir -m 700 -p "${ownershipPath}" || return 1
+    for marker in "$@"; do
+        : >> "${ownershipPath}/${marker}" || return 1
+    done
+}
+
+wdbxcRecordFirewallPort() {
+    local ownershipPath=/etc/v2ray-agent/.install-ownership
+    mkdir -m 700 -p "${ownershipPath}" || return 1
+    printf '%s %s %s\n' "$1" "$2" "$3" >> "${ownershipPath}/firewall-ports"
+}
+
 allowPort() {
     local type=$2
     if [[ -z "${type}" ]]; then
@@ -737,18 +760,22 @@ allowPort() {
             ! iptables -C INPUT -p "${type}" --dport "$1" -m comment --comment "allow $1/${type}(mack-a)" -j ACCEPT 2>/dev/null; then
             iptables -w 10 -I INPUT -p "${type}" --dport "$1" -m comment --comment "allow $1/${type}(wdbxc)" -j ACCEPT || return 1
         fi
-        netfilter-persistent save || return 1
+        if [[ "${3:-}" != --defer-save ]]; then
+            netfilter-persistent save || return 1
+        fi
     elif systemctl status ufw 2>/dev/null | grep -q "active (exited)"; then
         if ufw status | grep -q "Status: active"; then
             if ! ufw status | grep -q "$1/${type}"; then
-                sudo ufw allow "$1/${type}"
+                sudo ufw allow "$1/${type}" || return 1
+                wdbxcRecordFirewallPort ufw "$1" "${type}" || return 1
                 checkUFWAllowPort "$1"
             fi
         fi
     elif rc-update show 2>/dev/null | grep -q ufw; then
         if ufw status | grep -q "Status: active"; then
             if ! ufw status | grep -q "$1/${type}"; then
-                sudo ufw allow "$1/${type}"
+                sudo ufw allow "$1/${type}" || return 1
+                wdbxcRecordFirewallPort ufw "$1" "${type}" || return 1
                 checkUFWAllowPort "$1"
             fi
         fi
@@ -762,7 +789,8 @@ allowPort() {
                 firewallPort=$(echo "${firewallPort}" | awk -F ":" '{print $1-$2}')
             fi
 
-            firewall-cmd --zone=public --add-port="${firewallPort}/${type}" --permanent
+            firewall-cmd --zone=public --add-port="${firewallPort}/${type}" --permanent || return 1
+            wdbxcRecordFirewallPort firewalld "${firewallPort}" "${type}" || return 1
             checkFirewalldAllowPort "${firewallPort}"
         fi
 
@@ -1165,6 +1193,11 @@ installTools() {
         fi
     fi
 
+    if ! command -v python3 >/dev/null 2>&1; then
+        echoContent green " ---> 安装 Python 3，用于清理安装资源"
+        ${installType} python3 || exit 1
+    fi
+
     # 检测nginx版本，并提供是否卸载的选项
     if echo "${selectCustomInstallType}" | grep -qwE ",7,|,8,|,7,8,"; then
         echoContent green " ---> 检测到无需依赖Nginx的服务，跳过安装"
@@ -1211,6 +1244,10 @@ installTools() {
         echoContent green " ---> 检测到无需依赖证书的服务，跳过安装"
     else
         if [[ ! -d "$HOME/.acme.sh" ]] || [[ -d "$HOME/.acme.sh" && -z $(find "$HOME/.acme.sh/acme.sh") ]]; then
+            wdbxcRecordInstallOwnership acme-checked || return 1
+            if [[ ! -e "$HOME/.acme.sh" && ! -L "$HOME/.acme.sh" ]]; then
+                wdbxcRecordInstallOwnership acme-installed || return 1
+            fi
             echoContent green " ---> 安装acme.sh"
             curl -s https://get.acme.sh | sh >/etc/v2ray-agent/tls/acme.log 2>&1
 
@@ -1240,6 +1277,20 @@ bootStartup() {
 }
 # 安装Nginx
 installNginxTools() {
+    local path
+    wdbxcRecordInstallOwnership nginx-checked || return 1
+    if ! command -v nginx >/dev/null 2>&1; then
+        wdbxcRecordInstallOwnership nginx-installed || return 1
+    fi
+    if [[ "${release}" == debian || "${release}" == ubuntu ]]; then
+        for path in /etc/apt/sources.list.d/nginx.list /etc/apt/preferences.d/99nginx /etc/apt/trusted.gpg.d/nginx_signing.asc; do
+            if [[ ! -e "${path}" && ! -L "${path}" ]]; then
+                wdbxcRecordInstallOwnership "nginx-${path##*/}" || return 1
+            fi
+        done
+    elif [[ "${release}" == centos && ! -e /etc/yum.repos.d/nginx.repo && ! -L /etc/yum.repos.d/nginx.repo ]]; then
+        wdbxcRecordInstallOwnership nginx-nginx.repo || return 1
+    fi
 
     if [[ "${release}" == "debian" ]]; then
         sudo apt install gnupg2 ca-certificates lsb-release -y >/dev/null 2>&1
@@ -1384,6 +1435,7 @@ checkPortOpen() {
             listenIPv6PortConfig="listen [::]:${port};"
         fi
         cat <<EOF >${nginxConfigPath}checkPortOpen.conf
+# Managed by wdbxc
 server {
     listen ${port};
     ${listenIPv6PortConfig}
@@ -1486,6 +1538,7 @@ updateRedirectNginxConf() {
     fi
 
     cat <<EOF >${nginxConfigPath}alone.conf
+# Managed by wdbxc
     server {
     		listen 127.0.0.1:31300;
     		server_name _;
@@ -1496,6 +1549,7 @@ EOF
     if echo "${selectCustomInstallType}" | grep -qE ",2,|,5," || [[ -z "${selectCustomInstallType}" ]]; then
 
         cat <<EOF >>${nginxConfigPath}alone.conf
+# Managed by wdbxc
 server {
 	${nginxH2Conf}
 	server_name ${domain};
@@ -1534,6 +1588,7 @@ server {
 EOF
     elif echo "${selectCustomInstallType}" | grep -q ",5," || [[ -z "${selectCustomInstallType}" ]]; then
         cat <<EOF >>${nginxConfigPath}alone.conf
+# Managed by wdbxc
 server {
 	${nginxH2Conf}
 
@@ -1560,6 +1615,7 @@ EOF
 
     elif echo "${selectCustomInstallType}" | grep -q ",2," || [[ -z "${selectCustomInstallType}" ]]; then
         cat <<EOF >>${nginxConfigPath}alone.conf
+# Managed by wdbxc
 server {
 	${nginxH2Conf}
 
@@ -1587,6 +1643,7 @@ EOF
     else
 
         cat <<EOF >>${nginxConfigPath}alone.conf
+# Managed by wdbxc
 server {
 	${nginxH2Conf}
 
@@ -1603,6 +1660,7 @@ EOF
     fi
 
     cat <<EOF >>${nginxConfigPath}alone.conf
+# Managed by wdbxc
 server {
 	listen 127.0.0.1:31300 proxy_protocol;
 	server_name ${domain};
@@ -1635,6 +1693,7 @@ singBoxNginxConfig() {
 
     if echo "${selectCustomInstallType}" | grep -q ",11," || [[ "$1" == "all" ]]; then
         cat <<EOF >>${nginxConfigPath}sing_box_VMess_HTTPUpgrade.conf
+# Managed by wdbxc
 server {
 	${nginxH2Conf}
 
@@ -2060,6 +2119,7 @@ randomNum() {
 }
 # Nginx伪装博客
 nginxBlog() {
+    mkdir -p "${nginxStaticPath}" || return 1
     if [[ -n "$1" ]]; then
         echoContent skyBlue "\n进度 $1/${totalProgress} : 添加伪装站点"
     else
@@ -3306,7 +3366,11 @@ wdbxcPrepareFirewallPersistence() {
             return 1
         fi
     fi
-    systemctl enable --now netfilter-persistent || return 1
+    if ! systemctl is-enabled --quiet netfilter-persistent; then
+        systemctl enable --now netfilter-persistent || return 1
+    elif ! systemctl is-active --quiet netfilter-persistent; then
+        systemctl start netfilter-persistent || return 1
+    fi
 }
 
 wdbxcSaveFirewall() {
@@ -3339,7 +3403,7 @@ hysteriaPortHopping() {
     wdbxcPrepareFirewallPersistence || return 1
     local -a rule=(-p udp --dport "${portStart}:${portEnd}" -m comment --comment wdbxc_hysteria2_portHopping -j DNAT --to-destination ":${hysteriaPort}")
     iptables -w 10 -t nat -A PREROUTING "${rule[@]}" || return 1
-    if ! allowPort "${portStart}:${portEnd}" udp || ! wdbxcSaveFirewall; then
+    if ! allowPort "${portStart}:${portEnd}" udp --defer-save || ! wdbxcSaveFirewall; then
         echoContent red " ---> 添加或保存失败，请检查当前规则后重试"
         return 1
     fi
@@ -6004,62 +6068,398 @@ EOF
 
 # 卸载脚本
 unInstall() {
-    read -r -p "是否确认卸载安装内容？[y/n]:" unInstallStatus
-    if [[ "${unInstallStatus}" != "y" ]]; then
-        echoContent green " ---> 放弃卸载"
-        menu
-        exit 0
+    local confirmation
+    echoContent yellow "此操作会停止代理服务并删除本脚本安装的配置、证书、订阅和防火墙规则。"
+    read -r -p "确认完全卸载？[y/N]:" confirmation || return 1
+    [[ "${confirmation}" == y || "${confirmation}" == Y ]] || return 0
+    if ! command -v python3 >/dev/null 2>&1; then
+        echoContent red " ---> 完全卸载需要 python3"
+        return 1
     fi
     checkBTPanel
-    echoContent yellow " ---> 脚本不会删除acme相关配置，删除请手动执行 [rm -rf /root/.acme.sh]"
-    handleNginx stop
-    if [[ -z $(pgrep -f "nginx") ]]; then
-        echoContent green " ---> 停止Nginx成功"
-    fi
-    if [[ "${release}" == "alpine" ]]; then
-        if [[ "${coreInstallType}" == "1" ]]; then
-            handleXray stop
-            rc-update del xray default
-            rm -rf /etc/init.d/xray
-            echoContent green " ---> 删除Xray开机自启完成"
-        fi
-        if [[ "${coreInstallType}" == "2" || -n "${singBoxConfigPath}" ]]; then
-            handleSingBox stop
-            rc-update del sing-box default
-            rm -rf /etc/init.d/sing-box
-            echoContent green " ---> 删除sing-box开机自启完成"
-        fi
-    else
-        if [[ "${coreInstallType}" == "1" ]]; then
-            handleXray stop
-            rm -rf /etc/systemd/system/xray.service
-            echoContent green " ---> 删除Xray开机自启完成"
-        fi
-        if [[ "${coreInstallType}" == "2" || -n "${singBoxConfigPath}" ]]; then
-            handleSingBox stop
-            rm -rf /etc/systemd/system/sing-box.service
-            echoContent green " ---> 删除sing-box开机自启完成"
-        fi
-    fi
+    check1Panel
+    if ! python3 - "${release}" "${nginxConfigPath}" "${nginxStaticPath}" "$HOME" <<'WDBXC_UNINSTALL_PY'
+import hashlib
+import os
+from pathlib import Path
+import re
+import shlex
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+from zipfile import ZipFile
 
-    rm -rf /etc/v2ray-agent
-    rm -rf ${nginxConfigPath}alone.conf
-    rm -rf ${nginxConfigPath}checkPortOpen.conf >/dev/null 2>&1
-    rm -rf "${nginxConfigPath}sing_box_VMess_HTTPUpgrade.conf" >/dev/null 2>&1
-    rm -rf ${nginxConfigPath}checkPortOpen.conf >/dev/null 2>&1
 
-    unInstallSubscribe
+def run(args, *, check=True, data=None):
+    return subprocess.run(args, input=data, text=True, capture_output=True, check=check)
 
-    if [[ -d "${nginxStaticPath}" && -f "${nginxStaticPath}/check" ]]; then
-        rm -rf "${nginxStaticPath}*"
-        echoContent green " ---> 删除伪装网站完成"
+
+def atomic_write(path, contents):
+    metadata = path.stat()
+    descriptor, name = tempfile.mkstemp(dir=path.parent)
+    temporary = Path(name)
+    try:
+        with os.fdopen(descriptor, 'w') as stream:
+            os.fchown(stream.fileno(), metadata.st_uid, metadata.st_gid)
+            os.fchmod(stream.fileno(), stat.S_IMODE(metadata.st_mode))
+            stream.write(contents)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def regular_file(path):
+    return path.is_file() and not path.is_symlink() and path.resolve() == path
+
+
+def remove_tree(path):
+    if not os.path.lexists(path):
+        return
+    if path.is_symlink() or not path.is_dir() or path.resolve() != path:
+        raise RuntimeError(f'无法确认目录归属：{path}')
+    shutil.rmtree(path)
+
+
+def firewall_rules(contents, ssh_ports):
+    table = ''
+    positions = {}
+    kept, removed = [], []
+    for line in contents.splitlines(keepends=True):
+        if line.startswith('*'):
+            table = line.strip()[1:]
+        fields = shlex.split(line) if line.startswith('-A ') else []
+        if fields:
+            chain = (table, fields[1])
+            positions[chain] = positions.get(chain, 0) + 1
+            tag = fields[fields.index('--comment') + 1] if '--comment' in fields else ''
+            owned = False
+            if chain == ('nat', 'PREROUTING'):
+                owned = tag in ('wdbxc_hysteria2_portHopping', 'mack-a_hysteria2_portHopping') and '-p udp' in line and '-j DNAT' in line
+            elif chain == ('filter', 'INPUT'):
+                match = re.fullmatch(r'allow (\d+(?::\d+)?)/(tcp|udp)\((?:wdbxc|mack-a)\)', tag)
+                if match and '--dport' in fields and '-p' in fields and fields[-2:] == ['-j', 'ACCEPT']:
+                    port, protocol = match.groups()
+                    first, _, last = port.partition(':')
+                    ssh = protocol == 'tcp' and any(int(first) <= p <= int(last or first) for p in ssh_ports)
+                    owned = not ssh and fields[fields.index('--dport') + 1] == port and fields[fields.index('-p') + 1] == protocol
+            if owned:
+                removed.append((table, fields[1:], positions[chain]))
+                continue
+        kept.append(line)
+    return ''.join(kept), removed
+
+
+def get_ssh_ports():
+    ssh_ports = {22}
+    if shutil.which('ss'):
+        listeners = run(['ss', '-H', '-lntp']).stdout
+        ssh_ports.update(int(row.split()[3].rsplit(':', 1)[-1]) for row in listeners.splitlines()
+                         if re.search(r'\("sshd(?:-session)?"', row))
+    return ssh_ports
+
+
+def clean_firewall(ssh_ports):
+    plans = []
+    for family, tool in ((4, 'iptables'), (6, 'ip6tables')):
+        path = Path(f'/etc/iptables/rules.v{family}')
+        old = path.read_text() if regular_file(path) else ''
+        if os.path.lexists(path) and not regular_file(path):
+            raise RuntimeError(f'无法安全编辑防火墙文件：{path}')
+        new, saved = firewall_rules(old, ssh_ports)
+        live = firewall_rules(run([tool + '-save']).stdout, ssh_ports)[1] if shutil.which(tool + '-save') else []
+        if saved:
+            run([tool + '-restore', '--test'], data=new)
+        plans.append((tool, path, old, new, saved, live))
+
+    removed_live, written = [], []
+    try:
+        for tool, path, old, new, saved, live in plans:
+            for table, spec, position in live:
+                run([tool, '-w', '10', '-t', table, '-D', *spec])
+                removed_live.append((tool, table, spec, position))
+            if saved:
+                if path.read_text() != old:
+                    raise RuntimeError(f'防火墙规则文件在清理时发生变化：{path}')
+                atomic_write(path, new)
+                written.append((path, old))
+    except (OSError, RuntimeError, subprocess.CalledProcessError):
+        for path, old in reversed(written):
+            atomic_write(path, old)
+        for tool, table, spec, position in sorted(removed_live, key=lambda item: (item[0], item[1], item[2][0], item[3])):
+            run([tool, '-w', '10', '-t', table, '-I', spec[0], str(position), *spec[1:]], check=False)
+        raise
+
+
+def clean_managed_firewall_ports(state, ssh_ports):
+    records = state / 'firewall-ports'
+    if not regular_file(records):
+        return
+    for line in dict.fromkeys(records.read_text().splitlines()):
+        backend, port, protocol = line.split()
+        if backend not in ('ufw', 'firewalld') or not re.fullmatch(r'\d+(?::\d+|-\d+)?', port) or protocol not in ('tcp', 'udp'):
+            raise RuntimeError('无法识别脚本记录的防火墙规则')
+        ports = re.split(r'[:-]', port)
+        if protocol == 'tcp' and any(int(ports[0]) <= p <= int(ports[-1]) for p in ssh_ports):
+            continue
+        if backend == 'ufw':
+            status = run(['ufw', 'show', 'added']).stdout
+            if re.search(r'(?m)^ufw allow ' + re.escape(f'{port}/{protocol}') + r'\s*$', status):
+                run(['ufw', '--force', 'delete', 'allow', f'{port}/{protocol}'])
+        else:
+            command = ['firewall-cmd', '--zone=public', '--permanent']
+            rule = f'{port}/{protocol}'
+            query = run([*command, '--query-port=' + rule], check=False)
+            if query.returncode == 0:
+                run([*command, '--remove-port=' + rule])
+                run(['firewall-cmd', '--reload'])
+            elif query.returncode != 1:
+                raise RuntimeError('无法检查 firewalld 规则')
+
+
+def remove_core_units(application, release):
+    alpine = release == 'alpine'
+    for core in ('sing-box', 'xray', 'hysteria', 'tuic'):
+        service = core if alpine else core + '.service'
+        path = Path('/etc/init.d' if alpine else '/etc/systemd/system') / service
+        owned = regular_file(path) and any(
+            line.startswith(('ExecStart=', 'command=')) and str(application) + '/' in line
+            for line in path.read_text(errors='replace').splitlines()
+        )
+        if owned:
+            if alpine:
+                if run(['rc-service', service, 'status'], check=False).returncode == 0:
+                    run(['rc-service', service, 'stop'])
+            else:
+                # Stop first, so a failed stop leaves the service file available for recovery.
+                run(['systemctl', 'stop', service])
+            path.unlink()
+        if owned or not os.path.lexists(path):
+            base = Path('/etc/runlevels' if alpine else '/etc/systemd/system')
+            patterns = ('*/' + service,) if alpine else ('*.wants/' + service, '*.requires/' + service)
+            for pattern in patterns:
+                for link in base.glob(pattern):
+                    if link.is_symlink() and link.resolve() == path:
+                        link.unlink()
+    if not alpine:
+        run(['systemctl', 'daemon-reload'])
+
+
+def acme_certificates(home, application):
+    owned, shared = set(), set()
+    for directory in home.iterdir() if home.is_dir() and not home.is_symlink() else ():
+        if directory.is_symlink() or not directory.is_dir():
+            continue
+        for config in directory.glob('*.conf'):
+            if not regular_file(config):
+                continue
+            notes = config.read_text(errors='replace')
+            if not re.search(r'(?m)^Le_Domain=', notes):
+                continue
+            expression = r'(?m)^Le_Real(?:FullChain|Cert|Key)Path=[\'\"]' + re.escape(str(application / 'tls') + '/')
+            (owned if re.search(expression, notes) else shared).add(directory)
+    return owned - shared, shared
+
+
+def clean_cron(install_script, acme, remove_acme):
+    if not shutil.which('crontab'):
+        return
+    table = run(['crontab', '-l'], check=False)
+    if table.returncode and not re.search(r'no crontab', table.stderr, re.I):
+        raise RuntimeError('无法读取 cron 定时任务')
+    manager_job = re.compile(r'^\s*(?:\S+\s+){5}/bin/bash\s+' + re.escape(str(install_script)) + r'\s+(?:RenewTLS|UpdateGeo)(?:\s|$)')
+    kept = []
+    for line in table.stdout.splitlines(keepends=True):
+        if not line.lstrip().startswith('#') and (manager_job.match(line) or (remove_acme and str(acme / 'acme.sh') in line.replace('"', '').replace("'", '') and re.search(r'\s--cron(?:\s|$)', line))):
+            continue
+        kept.append(line)
+    if ''.join(kept) != table.stdout:
+        run(['crontab', '-'], data=''.join(kept) or '\n')
+
+
+def clean_acme_profile(home, acme):
+    for name in ('.bashrc', '.profile', '.bash_profile', '.zshrc'):
+        path = home / name
+        if not regular_file(path):
+            continue
+        content = path.read_text()
+        remaining = []
+        for line in content.splitlines(keepends=True):
+            plain = line.strip().replace('"', '').replace("'", '')
+            owned_env = any(plain == prefix + suffix for prefix in ('. ', 'source ') for suffix in (str(acme / 'acme.sh.env'), '$HOME/.acme.sh/acme.sh.env'))
+            if not owned_env and not (plain.startswith('alias acme.sh=') and str(acme / 'acme.sh') in plain):
+                remaining.append(line)
+        if ''.join(remaining) != content:
+            atomic_write(path, ''.join(remaining))
+
+
+def clean_static_assets(static_path, application):
+    # New deployments keep their site under the application directory. Legacy
+    # sites are cleaned using the ZIP they were extracted from.
+    if static_path == application / 'www' or not static_path.is_dir() or not regular_file(static_path / 'check'):
+        return
+    for archive in sorted(static_path.glob('html[1-9].zip')):
+        if not regular_file(archive):
+            continue
+        directories = set()
+        with ZipFile(archive) as bundle:
+            for entry in bundle.infolist():
+                relative = Path(entry.filename)
+                if entry.is_dir() or relative.is_absolute() or '..' in relative.parts:
+                    continue
+                candidate = static_path / relative
+                if regular_file(candidate) and candidate.read_bytes() == bundle.read(entry):
+                    candidate.unlink()
+                    directories.update(p for p in candidate.parents if static_path in p.parents)
+        for directory in sorted(directories, key=lambda item: len(item.parts), reverse=True):
+            if directory.is_dir() and not any(directory.iterdir()):
+                directory.rmdir()
+        archive.unlink()
+
+
+def nginx_plan(state, config_path, application):
+    standard_paths = {Path('/etc/nginx/conf.d'), Path('/etc/nginx/http.d')}
+    config_paths = standard_paths | {config_path}
+    managed = set()
+    for directory in config_paths:
+        for name in ('alone.conf', 'checkPortOpen.conf', 'sing_box_VMess_HTTPUpgrade.conf', 'subscribe.conf'):
+            path = directory / name
+            if regular_file(path):
+                text = path.read_text(errors='replace')
+                if '# Managed by wdbxc' in text or str(application) + '/' in text:
+                    managed.add(path)
+
+    repo = Path('/etc/apt/sources.list.d/nginx.list')
+    pin = Path('/etc/apt/preferences.d/99nginx')
+    key = Path('/etc/apt/trusted.gpg.d/nginx_signing.asc')
+    deb_files = {
+        repo: r'deb https?://nginx[.]org/packages/mainline/(?:ubuntu|debian) [A-Za-z0-9._-]+ nginx',
+        pin: r'Package: \*\nPin: origin nginx[.]org\nPin: release o=nginx\nPin-Priority: 900',
+        key: r'-----BEGIN PGP PUBLIC KEY BLOCK-----[\s\S]+-----END PGP PUBLIC KEY BLOCK-----',
+    }
+    matched = {path for path, pattern in deb_files.items() if regular_file(path) and re.fullmatch(pattern, path.read_text(errors='replace').strip())}
+    legacy_owner = not (state / 'nginx-checked').exists() and matched == set(deb_files)
+    owned = (state / 'nginx-installed').is_file() or legacy_owner
+    repo_entries = {path for path in matched if legacy_owner or (state / ('nginx-' + path.name)).is_file()}
+    yum_repo = Path('/etc/yum.repos.d/nginx.repo')
+    if (state / 'nginx-nginx.repo').is_file() and regular_file(yum_repo) and 'nginx.org/packages/' in yum_repo.read_text(errors='replace'):
+        repo_entries.add(yum_repo)
+    potential_sites = set()
+    for directory in config_paths | {Path('/etc/nginx/sites-enabled')}:
+        if directory.name == 'sites-enabled' and directory.is_dir():
+            potential_sites.update(p for p in directory.iterdir() if p.is_file())
+        else:
+            potential_sites.update(p for p in directory.glob('*.conf') if p.is_file())
+    default_sites = {path for path in potential_sites if path.name == 'default.conf' and regular_file(path)}
+    if default_sites and shutil.which('dpkg-query'):
+        package = run(['dpkg-query', '-W', '-f=${Conffiles}', 'nginx'], check=False)
+        conffiles = {Path(match[1]): match[2] for match in re.finditer(r'(?m)^\s+(\S+) ([a-f0-9]{32})(?:\s|$)', package.stdout)}
+        for path in default_sites:
+            if hashlib.md5(path.read_bytes()).hexdigest() == conffiles.get(path):
+                potential_sites.remove(path)
+    if potential_sites - managed or config_path not in standard_paths:
+        return managed, False, set()
+    return managed, owned, repo_entries
+
+
+def purge_nginx(release):
+    if release in ('debian', 'ubuntu'):
+        plan = run(['apt-get', '-s', 'purge', 'nginx']).stdout
+        changes = [line.split()[:2] for line in plan.splitlines() if line.startswith(('Purg ', 'Remv ', 'Inst ', 'Conf '))]
+        if changes and changes != [['Purg', 'nginx']]:
+            raise RuntimeError('Nginx 软件包卸载会影响其他软件包')
+        if changes:
+            run(['apt-get', '-y', 'purge', 'nginx'])
+    elif release == 'alpine':
+        if run(['apk', 'info', '-e', 'nginx'], check=False).returncode == 0:
+            run(['apk', 'del', 'nginx'])
+    elif release == 'centos':
+        if run(['rpm', '-q', 'nginx'], check=False).returncode == 0:
+            run(['rpm', '-e', 'nginx'])
+    else:
+        raise RuntimeError(f'无法确定 Nginx 软件包管理器：{release}')
+
+
+def uninstall(release, config_path, static_path, home):
+    application = Path('/etc/v2ray-agent')
+    state = application / '.install-ownership'
+    install_script = application / 'install.sh'
+    if application.is_symlink() or state.is_symlink() or application.resolve() != application:
+        raise RuntimeError('安装目录异常，卸载已停止')
+
+    acme = home / '.acme.sh'
+    owned_certs, shared_certs = acme_certificates(acme, application)
+    legacy_acme = not (state / 'acme-checked').exists() and owned_certs
+    dedicated_acme = acme.is_dir() and not acme.is_symlink() and not shared_certs and bool(legacy_acme or (state / 'acme-installed').is_file())
+    nginx_configs, dedicated_nginx, nginx_repos = nginx_plan(state, config_path, application)
+    if dedicated_nginx and not (state / 'nginx-checked').exists():
+        state.mkdir(mode=0o700, exist_ok=True)
+        for path in nginx_repos:
+            (state / ('nginx-' + path.name)).touch()
+        (state / 'nginx-installed').touch()
+        (state / 'nginx-checked').touch()
+
+    ssh_ports = get_ssh_ports()
+    clean_firewall(ssh_ports)
+    clean_managed_firewall_ports(state, ssh_ports)
+    remove_core_units(application, release)
+    clean_cron(install_script, acme, dedicated_acme)
+
+    for path in nginx_configs:
+        path.unlink()
+    clean_static_assets(static_path, application)
+    if dedicated_nginx:
+        purge_nginx(release)
+        for path in nginx_repos:
+            path.unlink(missing_ok=True)
+    elif shutil.which('nginx'):
+        if nginx_configs:
+            active = ['rc-service', 'nginx', 'status'] if release == 'alpine' else ['systemctl', 'is-active', '--quiet', 'nginx']
+            if run(active, check=False).returncode == 0:
+                run(['nginx', '-t'])
+                run(['rc-service', 'nginx', 'reload'] if release == 'alpine' else ['systemctl', 'reload', 'nginx'])
+        print('保留共用或无法确认归属的 Nginx')
+
+    if dedicated_acme:
+        clean_acme_profile(home, acme)
+        remove_tree(acme)
+    else:
+        for path in owned_certs:
+            remove_tree(path)
+        if acme.is_dir():
+            print('保留共用或无法确认归属的 acme.sh 和其他证书')
+    for path in map(Path, ('/usr/local/bin/wdbxc', '/usr/local/bin/gohan', '/usr/local/bin/vasma', '/usr/bin/vasma', '/usr/sbin/vasma')):
+        if path.is_symlink() and path.resolve() == install_script:
+            path.unlink()
+    remove_tree(application)
+
+
+if __name__ == '__main__':
+    try:
+        import fcntl
+
+        application = Path('/etc/v2ray-agent')
+        if application.is_symlink() or application.resolve() != application:
+            raise RuntimeError('安装目录异常，卸载已停止')
+        lock_fd = os.open(application / '.renew-tls.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(lock_fd, 'r+') as lock:
+            try:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise RuntimeError('证书维护正在进行，完成后再卸载') from None
+            uninstall(sys.argv[1], *(Path(arg) for arg in sys.argv[2:5]))
+    except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as error:
+        message = error.stderr.strip().splitlines()[-1] if isinstance(error, subprocess.CalledProcessError) and error.stderr else str(error)
+        print(f'卸载未完成：{message}', file=sys.stderr)
+        sys.exit(1)
+WDBXC_UNINSTALL_PY
+    then
+        return 1
     fi
-
-    if [[ -L "${WDBXC_COMMAND}" && "$(readlink "${WDBXC_COMMAND}")" == "${WDBXC_INSTALL_PATH}" ]]; then
-        rm -f -- "${WDBXC_COMMAND}"
-    fi
-    echoContent green " ---> 卸载快捷方式完成"
-    echoContent green " ---> 卸载v2ray-agent脚本完成"
+    echoContent green " ---> wdbxc 已卸载"
 }
 
 # CDN节点管理
@@ -8593,6 +8993,7 @@ installSubscribe() {
         fi
 
         cat <<EOF >${nginxConfigPath}subscribe.conf
+# Managed by wdbxc
 server {
     ${nginxSubscribeListen}
     ${serverName}
@@ -9878,6 +10279,7 @@ menu() {
 }
 {
     wdbxcInstallSelf "$@" || exit 1
+    wdbxcSetLocale
     initVar "$1"
     checkSystem
     checkCPUVendor
