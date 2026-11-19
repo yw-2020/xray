@@ -9840,25 +9840,25 @@ menu() {
     fi
 
     echoContent yellow "2.任意组合安装"
-    echoContent yellow "4.Hysteria2管理"
-    echoContent yellow "5.REALITY管理"
-    echoContent yellow "6.Tuic管理"
+    echoContent yellow "3.Hysteria2管理"
+    echoContent yellow "4.REALITY管理"
+    echoContent yellow "5.Tuic管理"
 
     echoContent skyBlue "-------------------------工具管理-----------------------------"
-    echoContent yellow "7.用户管理"
-    echoContent yellow "8.伪装站管理"
-    echoContent yellow "9.证书管理"
-    echoContent yellow "10.CDN节点管理"
-    echoContent yellow "11.分流工具"
-    echoContent yellow "12.添加新端口"
-    echoContent yellow "13.BT下载管理"
-    echoContent yellow "15.域名黑名单"
+    echoContent yellow "6.用户管理"
+    echoContent yellow "7.伪装站管理"
+    echoContent yellow "8.证书管理"
+    echoContent yellow "9.CDN节点管理"
+    echoContent yellow "10.分流工具"
+    echoContent yellow "11.添加新端口"
+    echoContent yellow "12.BT下载管理"
+    echoContent yellow "13.域名黑名单"
     echoContent skyBlue "-------------------------版本管理-----------------------------"
-    echoContent yellow "16.core管理"
-    echoContent yellow "18.安装BBR、DD脚本"
+    echoContent yellow "14.core管理"
+    echoContent yellow "15.安装BBR、DD脚本"
     echoContent skyBlue "-------------------------脚本管理-----------------------------"
-    echoContent yellow "17.更新 wdbxc 脚本"
-    echoContent yellow "20.卸载脚本"
+    echoContent yellow "16.更新 wdbxc 脚本"
+    echoContent yellow "17.卸载脚本"
     echoContent red "=============================================================="
     mkdirTools
     aliasInstall || exit 1
@@ -9871,58 +9871,51 @@ menu() {
         selectCoreInstall
         ;;
     3)
-        initXrayFrontingConfig 1
-        ;;
-    4)
         manageHysteria
         ;;
-    5)
+    4)
         manageReality 1
         ;;
-    6)
+    5)
         manageTuic
         ;;
-    7)
+    6)
         manageAccount 1
         ;;
-    8)
+    7)
         updateNginxBlog 1
         ;;
-    9)
+    8)
         renewalTLS 1
         ;;
-    10)
+    9)
         manageCDN 1
         ;;
-    11)
+    10)
         routingToolsMenu 1
         ;;
-    12)
+    11)
         addCorePort 1
         ;;
-    13)
+    12)
         btTools 1
         ;;
-    14)
-        switchAlpn 1
-        ;;
-    15)
+    13)
         blacklist 1
         ;;
-    16)
+    14)
         coreVersionManageMenu 1
         ;;
-    17)
-        updateV2RayAgent 1
-        ;;
-    18)
+    15)
         bbrInstall
         ;;
-    20)
+    16)
+        updateV2RayAgent 1
+        ;;
+    17)
         unInstall 1
         ;;
     esac
 }
 cronFunction
 menu
-
