@@ -7315,7 +7315,7 @@ routingToolsMenu() {
     echoContent yellow "4.Socks5分流【替换任意门分流】"
     echoContent yellow "5.DNS分流"
     #    echoContent yellow "6.VMess+WS+TLS分流"
-    echoContent yellow "7.SNI反向代理分流"
+    echoContent yellow "6.SNI反向代理分流"
 
     read -r -p "请选择:" selectType
 
@@ -7341,7 +7341,7 @@ routingToolsMenu() {
         #        fi
         #        vmessWSRouting 1
         #        ;;
-    7)
+    6)
         if [[ -n "${singBoxConfigPath}" ]]; then
             echoContent red "\n ---> 此功能不支持Hysteria2、Tuic"
         fi
@@ -8176,160 +8176,151 @@ EOF
 }
 
 # sing-box 个性化安装
+selectInstallProtocols() {
+    # Number the visible choices without changing the protocol IDs used by the installer.
+    local -a options=("$@") choices
+    local index selection choice protocol protocols
+    for index in "${!options[@]}"; do
+        echoContent yellow "$((index + 1)).${options[index]#*:}"
+    done
+
+    while read -r -p "请选择（多选用英文逗号分隔，例如 1,2,3）:" selection; do
+        if [[ ! "${selection}" =~ ^[[:blank:]]*[1-9][0-9]?([[:blank:]]*,[[:blank:]]*[1-9][0-9]?)*[[:blank:]]*$ ]]; then
+            echoContent red " ---> 输入不合法，请输入菜单中的编号"
+            continue
+        fi
+        IFS=, read -r -a choices <<< "${selection//[[:blank:]]/}"
+        protocols=,
+        for choice in "${choices[@]}"; do
+            if (( choice > ${#options[@]} )); then
+                protocols=
+                break
+            fi
+            protocol=${options[choice - 1]%%:*}
+            if [[ "${protocols}" != *",${protocol},"* ]]; then
+                protocols+="${protocol},"
+            fi
+        done
+        if [[ -n "${protocols}" ]]; then
+            selectCustomInstallType=${protocols}
+            return 0
+        fi
+        echoContent red " ---> 编号超出菜单范围，请重新输入"
+    done
+    return 1
+}
+
 customSingBoxInstall() {
     echoContent skyBlue "\n========================个性化安装============================"
-    echoContent yellow "0.VLESS+Vision+TCP"
-    echoContent yellow "1.VLESS+TLS+WS[仅CDN推荐]"
-    echoContent yellow "3.VMess+TLS+WS[仅CDN推荐]"
-    echoContent yellow "4.Trojan+TLS[不推荐]"
-    echoContent yellow "6.Hysteria2"
-    echoContent yellow "7.VLESS+Reality+Vision"
-    echoContent yellow "8.VLESS+Reality+gRPC"
-    echoContent yellow "9.Tuic"
-    echoContent yellow "10.Naive"
-    echoContent yellow "11.VMess+TLS+HTTPUpgrade"
+    local -a protocols=(
+        '0:VLESS+Vision+TCP'
+        '1:VLESS+TLS+WS[仅CDN推荐]'
+        '3:VMess+TLS+WS[仅CDN推荐]'
+        '4:Trojan+TLS[不推荐]'
+        '6:Hysteria2'
+        '7:VLESS+Reality+Vision'
+        '8:VLESS+Reality+gRPC'
+        '9:Tuic'
+        '10:Naive'
+        '11:VMess+TLS+HTTPUpgrade'
+    )
+    selectInstallProtocols "${protocols[@]}" || return 1
 
-    read -r -p "请选择[多选]，[例如:1,2,3]:" selectCustomInstallType
-    echoContent skyBlue "--------------------------------------------------------------"
-    if echo "${selectCustomInstallType}" | grep -q "，"; then
-        echoContent red " ---> 请使用英文逗号分隔"
-        exit 0
-    fi
-    if [[ "${selectCustomInstallType}" != "10" ]] && [[ "${selectCustomInstallType}" != "11" ]] && ((${#selectCustomInstallType} >= 2)) && ! echo "${selectCustomInstallType}" | grep -q ","; then
-        echoContent red " ---> 多选请使用英文逗号分隔"
-        exit 0
-    fi
-    if [[ "${selectCustomInstallType: -1}" != "," ]]; then
-        selectCustomInstallType="${selectCustomInstallType},"
-    fi
-    if [[ "${selectCustomInstallType:0:1}" != "," ]]; then
-        selectCustomInstallType=",${selectCustomInstallType},"
-    fi
-
-    if [[ "${selectCustomInstallType//,/}" =~ ^[0-9]+$ ]]; then
-        readLastInstallationConfig
-        unInstallSubscribe
-        totalProgress=9
-        installTools 1
-        # 申请tls
-        if echo "${selectCustomInstallType}" | grep -q -E ",0,|,1,|,3,|,4,|,6,|,9,|,10,|,11,"; then
-            initTLSNginxConfig 2
-            installTLS 3
-            handleNginx stop
-        fi
-
-        installSingBox 4
-        installSingBoxService 5
-        initSingBoxConfig custom 6
-        cleanUp xrayDel
-        installCronTLS 7
-        handleSingBox stop
-        handleSingBox start
+    readLastInstallationConfig
+    unInstallSubscribe
+    totalProgress=9
+    installTools 1
+    # 申请tls
+    if echo "${selectCustomInstallType}" | grep -q -E ",0,|,1,|,3,|,4,|,6,|,9,|,10,|,11,"; then
+        initTLSNginxConfig 2
+        installTLS 3
         handleNginx stop
-        handleNginx start
-        # 生成账号
-        checkGFWStatue 8
-        showAccounts 9
-    else
-        echoContent red " ---> 输入不合法"
-        customSingBoxInstall
     fi
+
+    installSingBox 4
+    installSingBoxService 5
+    initSingBoxConfig custom 6
+    cleanUp xrayDel
+    installCronTLS 7
+    handleSingBox stop
+    handleSingBox start
+    handleNginx stop
+    handleNginx start
+    # 生成账号
+    checkGFWStatue 8
+    showAccounts 9
 }
 
 # Xray-core个性化安装
 customXrayInstall() {
     echoContent skyBlue "\n========================个性化安装============================"
-    echoContent yellow "VLESS前置，默认安装0，无域名安装Reality只选择7即可"
-    echoContent yellow "0.VLESS+TLS_Vision+TCP[推荐]"
-    echoContent yellow "1.VLESS+TLS+WS[仅CDN推荐]"
-    #    echoContent yellow "2.Trojan+TLS+gRPC[仅CDN推荐]"
-    echoContent yellow "3.VMess+TLS+WS[仅CDN推荐]"
-    echoContent yellow "4.Trojan+TLS[不推荐]"
-    echoContent yellow "5.VLESS+TLS+gRPC[仅CDN推荐]"
-    echoContent yellow "7.VLESS+Reality+uTLS+Vision[推荐]"
-    # echoContent yellow "8.VLESS+Reality+gRPC"
-    echoContent yellow "12.VLESS+XHTTP+TLS"
-    read -r -p "请选择[多选]，[例如:1,2,3]:" selectCustomInstallType
-    echoContent skyBlue "--------------------------------------------------------------"
-    if echo "${selectCustomInstallType}" | grep -q "，"; then
-        echoContent red " ---> 请使用英文逗号分隔"
-        exit 0
-    fi
-    if [[ "${selectCustomInstallType}" != "12" ]] && ((${#selectCustomInstallType} >= 2)) && ! echo "${selectCustomInstallType}" | grep -q ","; then
-        echoContent red " ---> 多选请使用英文逗号分隔"
-        exit 0
+    echoContent yellow "默认添加 VLESS 前置。无域名安装 Reality 时只选 6。"
+    local -a protocols=(
+        '0:VLESS+TLS_Vision+TCP[推荐]'
+        '1:VLESS+TLS+WS[仅CDN推荐]'
+        '3:VMess+TLS+WS[仅CDN推荐]'
+        '4:Trojan+TLS[不推荐]'
+        '5:VLESS+TLS+gRPC[仅CDN推荐]'
+        '7:VLESS+Reality+uTLS+Vision[推荐]'
+        '12:VLESS+XHTTP+TLS'
+    )
+    selectInstallProtocols "${protocols[@]}" || return 1
+    if [[ "${selectCustomInstallType}" != ",7," && "${selectCustomInstallType}" != *",0,"* ]]; then
+        selectCustomInstallType=",0${selectCustomInstallType}"
     fi
 
-    if [[ "${selectCustomInstallType}" == "7" ]]; then
-        selectCustomInstallType=",${selectCustomInstallType},"
-    else
-        if ! echo "${selectCustomInstallType}" | grep -q "0,"; then
-            selectCustomInstallType=",0,${selectCustomInstallType},"
-        else
-            selectCustomInstallType=",${selectCustomInstallType},"
-        fi
-    fi
-
-    if [[ "${selectCustomInstallType:0:1}" != "," ]]; then
-        selectCustomInstallType=",${selectCustomInstallType},"
-    fi
-    if [[ "${selectCustomInstallType//,/}" =~ ^[0-7]+$ ]]; then
-        readLastInstallationConfig
-        unInstallSubscribe
-        checkBTPanel
-        check1Panel
-        totalProgress=12
-        installTools 1
-        if [[ -n "${btDomain}" ]]; then
-            echoContent skyBlue "\n进度  3/${totalProgress} : 检测到宝塔面板/1Panel，跳过申请TLS步骤"
-            handleXray stop
-            if [[ "${selectCustomInstallType}" != ",7," ]]; then
-                customPortFunction
-            fi
-        else
-            # 申请tls
-            if [[ "${selectCustomInstallType}" != ",7," ]]; then
-                initTLSNginxConfig 2
-                handleXray stop
-                installTLS 3
-            else
-                echoContent skyBlue "\n进度  2/${totalProgress} : 检测到仅安装Reality，跳过TLS证书步骤"
-            fi
-        fi
-
-        handleNginx stop
-        # 随机path
-        if echo "${selectCustomInstallType}" | grep -qE ",1,|,2,|,3,|,5,|,12,"; then
-            randomPathFunction 4
-        fi
-        if [[ -n "${btDomain}" ]]; then
-            echoContent skyBlue "\n进度  6/${totalProgress} : 检测到宝塔面板/1Panel，跳过伪装网站"
-        else
-            nginxBlog 6
-        fi
-        if [[ "${selectCustomInstallType}" != ",7," ]]; then
-            updateRedirectNginxConf
-            handleNginx start
-        fi
-
-        # 安装Xray
-        installXray 7 false
-        installXrayService 8
-        initXrayConfig custom 9
-        cleanUp singBoxDel
-        if [[ "${selectCustomInstallType}" != ",7," ]]; then
-            installCronTLS 10
-        fi
-
+    readLastInstallationConfig
+    unInstallSubscribe
+    checkBTPanel
+    check1Panel
+    totalProgress=12
+    installTools 1
+    if [[ -n "${btDomain}" ]]; then
+        echoContent skyBlue "\n进度  3/${totalProgress} : 检测到宝塔面板/1Panel，跳过申请TLS步骤"
         handleXray stop
-        handleXray start
-        # 生成账号
-        checkGFWStatue 11
-        showAccounts 12
+        if [[ "${selectCustomInstallType}" != ",7," ]]; then
+            customPortFunction
+        fi
     else
-        echoContent red " ---> 输入不合法"
-        customXrayInstall
+        # 申请tls
+        if [[ "${selectCustomInstallType}" != ",7," ]]; then
+            initTLSNginxConfig 2
+            handleXray stop
+            installTLS 3
+        else
+            echoContent skyBlue "\n进度  2/${totalProgress} : 检测到仅安装Reality，跳过TLS证书步骤"
+        fi
     fi
+
+    handleNginx stop
+    # 随机path
+    if echo "${selectCustomInstallType}" | grep -qE ",1,|,2,|,3,|,5,|,12,"; then
+        randomPathFunction 4
+    fi
+    if [[ -n "${btDomain}" ]]; then
+        echoContent skyBlue "\n进度  6/${totalProgress} : 检测到宝塔面板/1Panel，跳过伪装网站"
+    else
+        nginxBlog 6
+    fi
+    if [[ "${selectCustomInstallType}" != ",7," ]]; then
+        updateRedirectNginxConf
+        handleNginx start
+    fi
+
+    # 安装Xray
+    installXray 7 false
+    installXrayService 8
+    initXrayConfig custom 9
+    cleanUp singBoxDel
+    if [[ "${selectCustomInstallType}" != ",7," ]]; then
+        installCronTLS 10
+    fi
+
+    handleXray stop
+    handleXray start
+    # 生成账号
+    checkGFWStatue 11
+    showAccounts 12
 }
 
 # 选择核心安装sing-box、xray-core
